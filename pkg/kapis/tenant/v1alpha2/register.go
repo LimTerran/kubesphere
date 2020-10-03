@@ -45,6 +45,10 @@ const (
 
 var GroupVersion = schema.GroupVersion{Group: GroupName, Version: "v1alpha2"}
 
+func Resource(resource string) schema.GroupResource {
+	return GroupVersion.WithResource(resource).GroupResource()
+}
+
 func AddToContainer(c *restful.Container, factory informers.InformerFactory, k8sclient kubernetes.Interface, ksclient kubesphere.Interface, evtsClient events.Client, loggingClient logging.Interface, auditingclient auditing.Client) error {
 	mimePatch := []string{restful.MIME_JSON, runtime.MimeMergePatchJson, runtime.MimeJsonPatchJson}
 
@@ -56,89 +60,148 @@ func AddToContainer(c *restful.Container, factory informers.InformerFactory, k8s
 		Doc("List clusters available to users").
 		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.POST("/workspaces").
 		To(handler.CreateWorkspace).
 		Reads(tenantv1alpha2.WorkspaceTemplate{}).
 		Returns(http.StatusOK, api.StatusOK, tenantv1alpha2.WorkspaceTemplate{}).
 		Doc("Create workspace.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.DELETE("/workspaces/{workspace}").
 		To(handler.DeleteWorkspace).
+		Param(ws.PathParameter("workspace", "workspace name")).
 		Returns(http.StatusOK, api.StatusOK, errors.None).
 		Doc("Delete workspace.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.PUT("/workspaces/{workspace}").
 		To(handler.UpdateWorkspace).
+		Param(ws.PathParameter("workspace", "workspace name")).
 		Reads(tenantv1alpha2.WorkspaceTemplate{}).
 		Returns(http.StatusOK, api.StatusOK, tenantv1alpha2.WorkspaceTemplate{}).
 		Doc("Update workspace.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.PATCH("/workspaces/{workspace}").
 		To(handler.PatchWorkspace).
+		Param(ws.PathParameter("workspace", "workspace name")).
 		Consumes(mimePatch...).
 		Reads(tenantv1alpha2.WorkspaceTemplate{}).
 		Returns(http.StatusOK, api.StatusOK, tenantv1alpha2.WorkspaceTemplate{}).
 		Doc("Update workspace.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.GET("/workspaces").
 		To(handler.ListWorkspaces).
 		Returns(http.StatusOK, api.StatusOK, models.PageableResponse{}).
 		Doc("List all workspaces that belongs to the current user").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.GET("/workspaces/{workspace}").
 		To(handler.DescribeWorkspace).
+		Param(ws.PathParameter("workspace", "workspace name")).
 		Returns(http.StatusOK, api.StatusOK, tenantv1alpha2.WorkspaceTemplate{}).
 		Doc("Describe workspace.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.GET("/workspaces/{workspace}/clusters").
 		To(handler.ListWorkspaceClusters).
+		Param(ws.PathParameter("workspace", "workspace name")).
 		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
 		Doc("List clusters authorized to the specified workspace.").
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
 
 	ws.Route(ws.GET("/namespaces").
 		To(handler.ListNamespaces).
-		Param(ws.PathParameter("workspace", "workspace name")).
 		Doc("List the namespaces for the current user").
-		Returns(http.StatusOK, api.StatusOK, []corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
+	ws.Route(ws.GET("/federatednamespaces").
+		To(handler.ListFederatedNamespaces).
+		Doc("List the federated namespaces for the current user").
+		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
+	ws.Route(ws.GET("/workspaces/{workspace}/federatednamespaces").
+		To(handler.ListFederatedNamespaces).
+		Param(ws.PathParameter("workspace", "workspace name")).
+		Doc("List the federated namespaces of the specified workspace for the current user").
+		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.GET("/workspaces/{workspace}/namespaces").
 		To(handler.ListNamespaces).
 		Param(ws.PathParameter("workspace", "workspace name")).
 		Doc("List the namespaces of the specified workspace for the current user").
-		Returns(http.StatusOK, api.StatusOK, []corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
+	ws.Route(ws.GET("/workspaces/{workspace}/devops").
+		To(handler.ListDevOpsProjects).
+		Param(ws.PathParameter("workspace", "workspace name")).
+		Doc("List the devops projects of the specified workspace for the current user").
+		Returns(http.StatusOK, api.StatusOK, api.ListResult{}).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
+	ws.Route(ws.GET("/workspaces/{workspace}/workspacemembers/{workspacemember}/devops").
+		To(handler.ListDevOpsProjects).
+		Param(ws.PathParameter("workspace", "workspace name")).
+		Param(ws.PathParameter("workspacemember", "workspacemember username")).
+		Doc("List the devops projects of specified workspace for the workspace member").
+		Reads(corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, corev1.Namespace{}).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.GET("/workspaces/{workspace}/namespaces/{namespace}").
 		To(handler.DescribeNamespace).
 		Param(ws.PathParameter("workspace", "workspace name")).
+		Param(ws.PathParameter("namespace", "project name")).
 		Doc("Retrieve namespace details.").
-		Returns(http.StatusOK, api.StatusOK, []corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, corev1.Namespace{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.DELETE("/workspaces/{workspace}/namespaces/{namespace}").
 		To(handler.DeleteNamespace).
 		Param(ws.PathParameter("workspace", "workspace name")).
+		Param(ws.PathParameter("namespace", "project name")).
 		Doc("Delete namespace.").
 		Returns(http.StatusOK, api.StatusOK, errors.None).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.POST("/workspaces/{workspace}/namespaces").
 		To(handler.CreateNamespace).
 		Param(ws.PathParameter("workspace", "workspace name")).
 		Doc("List the namespaces of the specified workspace for the current user").
 		Reads(corev1.Namespace{}).
-		Returns(http.StatusOK, api.StatusOK, []corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, corev1.Namespace{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
+	ws.Route(ws.GET("/workspaces/{workspace}/workspacemembers/{workspacemember}/namespaces").
+		To(handler.ListNamespaces).
+		Param(ws.PathParameter("workspace", "workspace name")).
+		Param(ws.PathParameter("workspacemember", "workspacemember username")).
+		Doc("List the namespaces of the specified workspace for the workspace member").
+		Reads(corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, corev1.Namespace{}).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.PUT("/workspaces/{workspace}/namespaces/{namespace}").
 		To(handler.UpdateNamespace).
 		Param(ws.PathParameter("workspace", "workspace name")).
+		Param(ws.PathParameter("namespace", "project name")).
 		Reads(corev1.Namespace{}).
-		Returns(http.StatusOK, api.StatusOK, []corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, corev1.Namespace{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
+
 	ws.Route(ws.PATCH("/workspaces/{workspace}/namespaces/{namespace}").
 		To(handler.PatchNamespace).
 		Consumes(mimePatch...).
 		Param(ws.PathParameter("workspace", "workspace name")).
+		Param(ws.PathParameter("namespace", "project name")).
 		Reads(corev1.Namespace{}).
-		Returns(http.StatusOK, api.StatusOK, []corev1.Namespace{}).
+		Returns(http.StatusOK, api.StatusOK, corev1.Namespace{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.TenantResourcesTag}))
 
 	ws.Route(ws.GET("/events").
@@ -170,8 +233,6 @@ func AddToContainer(c *restful.Container, factory informers.InformerFactory, k8s
 		To(handler.QueryLogs).
 		Doc("Query logs against the cluster.").
 		Param(ws.QueryParameter("operation", "Operation type. This can be one of four types: query (for querying logs), statistics (for retrieving statistical data), histogram (for displaying log count by time interval) and export (for exporting logs). Defaults to query.").DefaultValue("query").DataType("string").Required(false)).
-		Param(ws.QueryParameter("workspaces", "A comma-separated list of workspaces. This field restricts the query to specified workspaces. For example, the following filter matches the workspace my-ws and demo-ws: `my-ws,demo-ws`").DataType("string").Required(false)).
-		Param(ws.QueryParameter("workspace_query", "A comma-separated list of keywords. Differing from **workspaces**, this field performs fuzzy matching on workspaces. For example, the following value limits the query to workspaces whose name contains the word my(My,MY,...) *OR* demo(Demo,DemO,...): `my,demo`.").DataType("string").Required(false)).
 		Param(ws.QueryParameter("namespaces", "A comma-separated list of namespaces. This field restricts the query to specified namespaces. For example, the following filter matches the namespace my-ns and demo-ns: `my-ns,demo-ns`").DataType("string").Required(false)).
 		Param(ws.QueryParameter("namespace_query", "A comma-separated list of keywords. Differing from **namespaces**, this field performs fuzzy matching on namespaces. For example, the following value limits the query to namespaces whose name contains the word my(My,MY,...) *OR* demo(Demo,DemO,...): `my,demo`.").DataType("string").Required(false)).
 		Param(ws.QueryParameter("workloads", "A comma-separated list of workloads. This field restricts the query to specified workloads. For example, the following filter matches the workload my-wl and demo-wl: `my-wl,demo-wl`").DataType("string").Required(false)).

@@ -378,7 +378,7 @@ func (h *openpitrixHandler) ListAppVersions(req *restful.Request, resp *restful.
 	if statistics {
 		for _, item := range result.Items {
 			if version, ok := item.(*openpitrix.AppVersion); ok {
-				statisticsResult, err := h.openpitrix.ListApplications(&params.Conditions{Match: map[string]string{"app_id": version.AppId, "version_id": version.VersionId}}, 0, 0, "", false)
+				statisticsResult, err := h.openpitrix.ListApplications(&params.Conditions{Match: map[string]string{openpitrix.AppId: version.AppId, openpitrix.VersionId: version.VersionId}}, 0, 0, "", false)
 				if err != nil {
 					klog.Errorln(err)
 					api.HandleInternalError(resp, nil, err)
@@ -403,6 +403,14 @@ func (h *openpitrixHandler) ListApps(req *restful.Request, resp *restful.Respons
 		klog.V(4).Infoln(err)
 		api.HandleBadRequest(resp, nil, err)
 		return
+	}
+
+	if req.PathParameter("workspace") != "" {
+		conditions.Match[openpitrix.ISV] = req.PathParameter("workspace")
+	}
+
+	if conditions.Match[openpitrix.ISV] == "" {
+		conditions.Match[openpitrix.ISV] = req.QueryParameter("workspace")
 	}
 
 	result, err := h.openpitrix.ListApps(conditions, orderBy, reverse, limit, offset)
@@ -495,6 +503,10 @@ func (h *openpitrixHandler) CreateApp(req *restful.Request, resp *restful.Respon
 	}
 
 	createAppRequest.Username = req.HeaderParameter(constants.UserNameHeader)
+
+	if req.PathParameter("workspace") != "" {
+		createAppRequest.Isv = req.PathParameter("workspace")
+	}
 
 	validate, _ := strconv.ParseBool(req.QueryParameter("validate"))
 
@@ -719,7 +731,13 @@ func (h *openpitrixHandler) ListCategories(req *restful.Request, resp *restful.R
 	if statistics {
 		for _, item := range result.Items {
 			if category, ok := item.(*openpitrix.Category); ok {
-				statisticsResult, err := h.openpitrix.ListApps(&params.Conditions{Match: map[string]string{"category_id": category.CategoryID, "status": openpitrix.StatusActive, "repo": openpitrix.BuiltinRepoId}}, "", false, 0, 0)
+				statisticsResult, err := h.openpitrix.ListApps(&params.Conditions{
+					Match: map[string]string{
+						openpitrix.CategoryId: category.CategoryID,
+						openpitrix.Status:     openpitrix.StatusActive,
+						openpitrix.RepoId:     openpitrix.BuiltinRepoId,
+					},
+				}, "", false, 0, 0)
 				if err != nil {
 					klog.Errorln(err)
 					handleOpenpitrixError(resp, err)
@@ -741,6 +759,14 @@ func (h *openpitrixHandler) CreateRepo(req *restful.Request, resp *restful.Respo
 		api.HandleBadRequest(resp, nil, err)
 		return
 	}
+
+	if req.PathParameter("workspace") != "" {
+		if createRepoRequest.Workspace == nil {
+			createRepoRequest.Workspace = new(string)
+		}
+		*createRepoRequest.Workspace = req.PathParameter("workspace")
+	}
+
 	validate, _ := strconv.ParseBool(req.QueryParameter("validate"))
 
 	var result interface{}
@@ -847,22 +873,9 @@ func (h *openpitrixHandler) ListRepos(req *restful.Request, resp *restful.Respon
 		return
 	}
 
-	result, err := h.openpitrix.ListRepos(conditions, orderBy, reverse, limit, offset)
-
-	if err != nil {
-		klog.Errorln(err)
-		handleOpenpitrixError(resp, err)
-		return
+	if req.PathParameter("workspace") != "" {
+		conditions.Match[openpitrix.WorkspaceLabel] = req.PathParameter("workspace")
 	}
-
-	resp.WriteEntity(result)
-}
-
-func (h *openpitrixHandler) ListEvents(req *restful.Request, resp *restful.Response) {
-	limit, offset := params.ParsePaging(req)
-	orderBy := params.GetStringValueWithDefault(req, params.OrderByParam, openpitrix.CreateTime)
-	reverse := params.GetBoolValueWithDefault(req, params.ReverseParam, false)
-	conditions, err := params.ParseConditions(req)
 
 	if err != nil {
 		klog.V(4).Infoln(err)
@@ -870,7 +883,7 @@ func (h *openpitrixHandler) ListEvents(req *restful.Request, resp *restful.Respo
 		return
 	}
 
-	result, err := h.openpitrix.ListEvents(conditions, orderBy, reverse, limit, offset)
+	result, err := h.openpitrix.ListRepos(conditions, orderBy, reverse, limit, offset)
 
 	if err != nil {
 		klog.Errorln(err)

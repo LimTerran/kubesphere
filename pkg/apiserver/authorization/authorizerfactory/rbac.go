@@ -35,7 +35,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/authentication/user"
-	rbacv1helpers "kubesphere.io/kubesphere/pkg/apis/rbac/v1"
+	rbacv1helpers "kubesphere.io/kubesphere/pkg/api/rbac/v1"
 )
 
 const (
@@ -131,8 +131,8 @@ func (r *RBACAuthorizer) Authorize(requestAttributes authorizer.Attributes) (aut
 			scope = fmt.Sprintf("in namespace %q", ns)
 		} else if ws := requestAttributes.GetWorkspace(); len(ws) > 0 {
 			scope = fmt.Sprintf("in workspace %q", ws)
-		} else if cluster := requestAttributes.GetWorkspace(); len(cluster) > 0 {
-			scope = fmt.Sprintf("in cluster %q", cluster)
+		} else if requestAttributes.GetResourceScope() == request.ClusterScope {
+			scope = "cluster scope"
 		} else {
 			scope = "global-wide"
 		}
@@ -228,15 +228,27 @@ func (r *RBACAuthorizer) visitRulesFor(requestAttributes authorizer.Attributes, 
 				}
 			}
 		}
+
+		if requestAttributes.GetResourceScope() == request.GlobalScope {
+			return
+		}
 	}
 
-	if requestAttributes.GetResourceScope() == request.WorkspaceScope || requestAttributes.GetResourceScope() == request.NamespaceScope {
+	if requestAttributes.GetResourceScope() == request.WorkspaceScope ||
+		requestAttributes.GetResourceScope() == request.NamespaceScope ||
+		requestAttributes.GetResourceScope() == request.DevOpsScope {
 
 		var workspace string
 		var err error
-
+		// all of resource under namespace and devops belong to workspace
 		if requestAttributes.GetResourceScope() == request.NamespaceScope {
-			if workspace, err = r.am.GetControlledWorkspace(requestAttributes.GetNamespace()); err != nil {
+			if workspace, err = r.am.GetNamespaceControlledWorkspace(requestAttributes.GetNamespace()); err != nil {
+				if !visitor(nil, "", nil, err) {
+					return
+				}
+			}
+		} else if requestAttributes.GetResourceScope() == request.DevOpsScope {
+			if workspace, err = r.am.GetDevOpsControlledWorkspace(requestAttributes.GetDevOps()); err != nil {
 				if !visitor(nil, "", nil, err) {
 					return
 				}
@@ -247,7 +259,7 @@ func (r *RBACAuthorizer) visitRulesFor(requestAttributes authorizer.Attributes, 
 			workspace = requestAttributes.GetWorkspace()
 		}
 
-		if workspaceRoleBindings, err := r.am.ListWorkspaceRoleBindings("", requestAttributes.GetWorkspace()); err != nil {
+		if workspaceRoleBindings, err := r.am.ListWorkspaceRoleBindings("", workspace); err != nil {
 			if !visitor(nil, "", nil, err) {
 				return
 			}
@@ -277,19 +289,33 @@ func (r *RBACAuthorizer) visitRulesFor(requestAttributes authorizer.Attributes, 
 		}
 	}
 
-	if requestAttributes.GetResourceScope() == request.NamespaceScope {
-		if roleBindings, err := r.am.ListRoleBindings("", requestAttributes.GetNamespace()); err != nil {
+	if requestAttributes.GetResourceScope() == request.NamespaceScope ||
+		requestAttributes.GetResourceScope() == request.DevOpsScope {
+
+		namespace := requestAttributes.GetNamespace()
+		// list devops role binding
+		if requestAttributes.GetResourceScope() == request.DevOpsScope {
+			if relatedNamespace, err := r.am.GetDevOpsRelatedNamespace(requestAttributes.GetDevOps()); err != nil {
+				if !visitor(nil, "", nil, err) {
+					return
+				}
+			} else {
+				namespace = relatedNamespace
+			}
+		}
+
+		if roleBindings, err := r.am.ListRoleBindings("", namespace); err != nil {
 			if !visitor(nil, "", nil, err) {
 				return
 			}
 		} else {
 			sourceDescriber := &roleBindingDescriber{}
 			for _, roleBinding := range roleBindings {
-				subjectIndex, applies := appliesTo(requestAttributes.GetUser(), roleBinding.Subjects, requestAttributes.GetNamespace())
+				subjectIndex, applies := appliesTo(requestAttributes.GetUser(), roleBinding.Subjects, namespace)
 				if !applies {
 					continue
 				}
-				regoPolicy, rules, err := r.am.GetRoleReferenceRules(roleBinding.RoleRef, requestAttributes.GetNamespace())
+				regoPolicy, rules, err := r.am.GetRoleReferenceRules(roleBinding.RoleRef, namespace)
 				if err != nil {
 					visitor(nil, "", nil, err)
 					continue

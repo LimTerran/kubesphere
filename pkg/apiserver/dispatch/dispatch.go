@@ -20,6 +20,7 @@ import (
 	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/proxy"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
@@ -118,13 +119,13 @@ func (c *clusterDispatch) Dispatch(w http.ResponseWriter, req *http.Request, han
 	}
 
 	if !isClusterReady(cluster) {
-		http.Error(w, fmt.Sprintf("cluster is not ready"), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("cluster %s is not ready", cluster.Name), http.StatusInternalServerError)
 		return
 	}
 
 	innCluster := c.getInnerCluster(cluster.Name)
 	if innCluster == nil {
-		http.Error(w, fmt.Sprintf("cluster not ready"), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("cluster %s is not ready", cluster.Name), http.StatusInternalServerError)
 		return
 	}
 
@@ -152,12 +153,26 @@ func (c *clusterDispatch) Dispatch(w http.ResponseWriter, req *http.Request, han
 		// req.Header['Authorization'] before authentication.
 		req.Header.Set("X-KubeSphere-Authorization", req.Header.Get("Authorization"))
 
+		// If cluster kubeconfig using token authentication, transport will not override authorization header,
+		// this will cause requests reject by kube-apiserver since kubesphere authorization header is not
+		// acceptable. Delete this header is safe since we are using X-KubeSphere-Authorization.
+		// https://github.com/kubernetes/client-go/blob/master/transport/round_trippers.go#L285
+		req.Header.Del("Authorization")
+
 		// Dirty trick again. The kube-apiserver apiserver proxy rejects all proxy requests with dryRun parameter
 		// https://github.com/kubernetes/kubernetes/pull/66083
 		// Really don't understand why they do this. And here we are, bypass with replacing 'dryRun'
 		// with dryrun and switch bach before send to kube-apiserver on the other side.
 		if len(u.Query()["dryRun"]) != 0 {
 			req.URL.RawQuery = strings.Replace(req.URL.RawQuery, "dryRun", "dryrun", 1)
+		}
+
+		// kube-apiserver lost query string when proxy websocket requests, there are several issues opened
+		// tracking this, like https://github.com/kubernetes/kubernetes/issues/89360. Also there is a promising
+		// PR aim to fix this, but it's unlikely it will get merged soon. So here we are again. Put raw query
+		// string in Header and extract it on member cluster.
+		if httpstream.IsUpgradeRequest(req) && len(req.URL.RawQuery) != 0 {
+			req.Header.Set("X-KubeSphere-Rawquery", req.URL.RawQuery)
 		}
 	} else {
 		// everything else goes to ks-apiserver, since our ks-apiserver has the ability to proxy kube-apiserver requests
@@ -260,10 +275,8 @@ func isClusterReady(cluster *clusterv1alpha1.Cluster) bool {
 }
 
 func isClusterHostCluster(cluster *clusterv1alpha1.Cluster) bool {
-	for key, value := range cluster.Annotations {
-		if key == clusterv1alpha1.IsHostCluster && value == "true" {
-			return true
-		}
+	if _, ok := cluster.Labels[clusterv1alpha1.HostCluster]; ok {
+		return true
 	}
 
 	return false

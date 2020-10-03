@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha2
 
 import (
@@ -37,7 +53,7 @@ const (
 	StatusFailed             = "failed"
 	StatusBound              = "bound"
 	StatusLost               = "lost"
-	StatusComplete           = "complete"
+	StatusComplete           = "completed"
 	StatusWarning            = "warning"
 	StatusUnschedulable      = "unschedulable"
 	Deployments              = "deployments"
@@ -140,8 +156,11 @@ func FuzzyMatch(m map[string]string, key, value string) bool {
 func ObjectMetaCompare(left, right metav1.ObjectMeta, compareField string) bool {
 	switch compareField {
 	case CreateTime:
-		if left.CreationTimestamp.Equal(&right.CreationTimestamp) {
-			return strings.Compare(left.Name, right.Name) <= 0
+		if left.CreationTimestamp.Time.Equal(right.CreationTimestamp.Time) {
+			if left.Namespace == right.Namespace {
+				return strings.Compare(left.Name, right.Name) < 0
+			}
+			return strings.Compare(left.Namespace, right.Namespace) < 0
 		}
 		return left.CreationTimestamp.Time.Before(right.CreationTimestamp.Time)
 	case Name:

@@ -45,15 +45,10 @@ spec:
                       properties:
                         op:
                           type: string
-                          path:
-                            type: string
-                          value:
-                            anyOf:
-                              - type: string
-                              - type: integer
-                              - type: boolean
-                              - type: object
-                              - type: array
+                        path:
+                          type: string
+                        value:
+                          type: object
                       required:
                       - path
                       - value

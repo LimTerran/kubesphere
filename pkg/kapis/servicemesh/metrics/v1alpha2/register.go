@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha2
 
 import (
@@ -8,9 +24,9 @@ import (
 	"net/http"
 )
 
-const GroupName = "servicemesh.kubesphere.io"
+const groupName = "servicemesh.kubesphere.io"
 
-var GroupVersion = schema.GroupVersion{Group: GroupName, Version: "v1alpha2"}
+var GroupVersion = schema.GroupVersion{Group: groupName, Version: "v1alpha2"}
 
 func AddToContainer(c *restful.Container) error {
 
@@ -36,8 +52,8 @@ func AddToContainer(c *restful.Container) error {
 		Param(webservice.QueryParameter("byLabels[]", "list of labels to use for grouping metrics(via Prometheus 'by' clause), e.g. source_workload, destination_service_name").DefaultValue("[]")).
 		Param(webservice.QueryParameter("requestProtocol", "request protocol for the telemetry, e.g. http/tcp/grpc").DefaultValue("all protocols")).
 		Param(webservice.QueryParameter("reporter", "istio telemetry reporter, 'source' or 'destination'").DefaultValue("source")).
-		Returns(http.StatusOK, "ok", MetricsResponse{}).
-		Writes(MetricsResponse{})).Produces(restful.MIME_JSON)
+		Returns(http.StatusOK, "ok", metricsResponse{}).
+		Writes(metricsResponse{})).Produces(restful.MIME_JSON)
 
 	// Get app metrics
 	// Get /namespaces/{namespace}/apps/{app}/metrics
@@ -57,8 +73,8 @@ func AddToContainer(c *restful.Container) error {
 		Param(webservice.QueryParameter("byLabels[]", "list of labels to use for grouping metrics(via Prometheus 'by' clause), e.g. source_workload, destination_service_name").DefaultValue("[]")).
 		Param(webservice.QueryParameter("requestProtocol", "request protocol for the telemetry, e.g. http/tcp/grpc").DefaultValue("all protocols")).
 		Param(webservice.QueryParameter("reporter", "istio telemetry reporter, 'source' or 'destination'").DefaultValue("source")).
-		Returns(http.StatusOK, "ok", MetricsResponse{}).
-		Writes(MetricsResponse{})).
+		Returns(http.StatusOK, "ok", metricsResponse{}).
+		Writes(metricsResponse{})).
 		Produces(restful.MIME_JSON)
 
 	// Get workload metrics
@@ -69,7 +85,6 @@ func AddToContainer(c *restful.Container) error {
 		Doc("Get workload metrics from a specific namespace").
 		Param(webservice.PathParameter("namespace", "name of the namespace").Required(true)).
 		Param(webservice.PathParameter("workload", "name of the workload").Required(true)).
-		Param(webservice.PathParameter("service", "name of the service")).
 		Param(webservice.QueryParameter("filters[]", "type of metrics type, fetch all metrics when empty, e.g. request_count, request_duration, request_error_count").DefaultValue("[]")).
 		Param(webservice.QueryParameter("queryTime", "from which UNIX time to extract metrics")).
 		Param(webservice.QueryParameter("duration", "duration of the query period, in seconds").DefaultValue("1800")).
@@ -80,8 +95,8 @@ func AddToContainer(c *restful.Container) error {
 		Param(webservice.QueryParameter("byLabels[]", "list of labels to use for grouping metrics(via Prometheus 'by' clause), e.g. source_workload, destination_service_name").DefaultValue("[]")).
 		Param(webservice.QueryParameter("requestProtocol", "request protocol for the telemetry, e.g. http/tcp/grpc").DefaultValue("all protocols")).
 		Param(webservice.QueryParameter("reporter", "istio telemetry reporter, 'source' or 'destination'").DefaultValue("source")).
-		Returns(http.StatusOK, "ok", MetricsResponse{}).
-		Writes(MetricsResponse{})).
+		Returns(http.StatusOK, "ok", metricsResponse{}).
+		Writes(metricsResponse{})).
 		Produces(restful.MIME_JSON)
 
 	// Get namespace metrics
@@ -91,7 +106,6 @@ func AddToContainer(c *restful.Container) error {
 		Metadata(restfulspec.KeyOpenAPITags, tags).
 		Doc("Get metrics from a specific namespace").
 		Param(webservice.PathParameter("namespace", "name of the namespace").Required(true)).
-		Param(webservice.PathParameter("service", "name of the service")).
 		Param(webservice.QueryParameter("filters[]", "type of metrics type, fetch all metrics when empty, e.g. request_count, request_duration, request_error_count").DefaultValue("[]")).
 		Param(webservice.QueryParameter("queryTime", "from which UNIX time to extract metrics")).
 		Param(webservice.QueryParameter("duration", "duration of the query period, in seconds").DefaultValue("1800")).
@@ -102,8 +116,8 @@ func AddToContainer(c *restful.Container) error {
 		Param(webservice.QueryParameter("byLabels[]", "list of labels to use for grouping metrics(via Prometheus 'by' clause), e.g. source_workload, destination_service_name").DefaultValue("[]")).
 		Param(webservice.QueryParameter("requestProtocol", "request protocol for the telemetry, e.g. http/tcp/grpc").DefaultValue("all protocols")).
 		Param(webservice.QueryParameter("reporter", "istio telemetry reporter, 'source' or 'destination'").DefaultValue("source")).
-		Returns(http.StatusOK, "ok", MetricsResponse{}).
-		Writes(MetricsResponse{})).Produces(restful.MIME_JSON)
+		Returns(http.StatusOK, "ok", metricsResponse{}).
+		Writes(metricsResponse{})).Produces(restful.MIME_JSON)
 
 	// Get namespace graph
 	// Get /namespaces/{namespace}/graph
@@ -119,8 +133,8 @@ func AddToContainer(c *restful.Container) error {
 		Param(webservice.QueryParameter("injectServiceNodes", "flag for injecting the requested service node between source and destination nodes.").DefaultValue("false")).
 		Returns(http.StatusBadRequest, "bad request", BadRequestError{}).
 		Returns(http.StatusNotFound, "not found", NotFoundError{}).
-		Returns(http.StatusOK, "ok", GraphResponse{}).
-		Writes(GraphResponse{})).Produces(restful.MIME_JSON)
+		Returns(http.StatusOK, "ok", graphResponse{}).
+		Writes(graphResponse{})).Produces(restful.MIME_JSON)
 
 	// Get namespaces graph, for multiple namespaces
 	// Get /namespaces/graph
@@ -135,8 +149,8 @@ func AddToContainer(c *restful.Container) error {
 		Param(webservice.QueryParameter("injectServiceNodes", "flag for injecting the requested service node between source and destination nodes.").DefaultValue("false")).
 		Returns(http.StatusBadRequest, "bad request", BadRequestError{}).
 		Returns(http.StatusNotFound, "not found", NotFoundError{}).
-		Returns(http.StatusOK, "ok", GraphResponse{}).
-		Writes(GraphResponse{})).Produces(restful.MIME_JSON)
+		Returns(http.StatusOK, "ok", graphResponse{}).
+		Writes(graphResponse{})).Produces(restful.MIME_JSON)
 
 	// Get namespace health
 	webservice.Route(webservice.GET("/namespaces/{namespace}/health").
@@ -144,7 +158,6 @@ func AddToContainer(c *restful.Container) error {
 		Metadata(restfulspec.KeyOpenAPITags, tags).
 		Doc("Get app/service/workload health of a namespace").
 		Param(webservice.PathParameter("namespace", "name of a namespace").Required(true)).
-		Param(webservice.PathParameter("type", "the type of health, app/service/workload, default app").DefaultValue("app")).
 		Param(webservice.QueryParameter("rateInterval", "the rate interval used for fetching error rate").DefaultValue("10m").Required(true)).
 		Param(webservice.QueryParameter("queryTime", "the time to use for query")).
 		Returns(http.StatusBadRequest, "bad request", BadRequestError{}).

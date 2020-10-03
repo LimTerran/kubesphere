@@ -1,10 +1,28 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha2
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/emicklei/go-restful"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 	"kubesphere.io/kubesphere/pkg/api"
@@ -55,10 +73,11 @@ func (h *tenantHandler) ListWorkspaces(req *restful.Request, resp *restful.Respo
 	resp.WriteEntity(result)
 }
 
-func (h *tenantHandler) ListNamespaces(req *restful.Request, resp *restful.Response) {
-	user, ok := request.UserFrom(req.Request.Context())
+func (h *tenantHandler) ListFederatedNamespaces(req *restful.Request, resp *restful.Response) {
+	workspace := req.PathParameter("workspace")
 	queryParam := query.ParseQueryParameter(req)
 
+	workspaceMember, ok := request.UserFrom(req.Request.Context())
 	if !ok {
 		err := fmt.Errorf("cannot obtain user info")
 		klog.Errorln(err)
@@ -66,9 +85,65 @@ func (h *tenantHandler) ListNamespaces(req *restful.Request, resp *restful.Respo
 		return
 	}
 
-	workspace := req.PathParameter("workspace")
+	result, err := h.tenant.ListFederatedNamespaces(workspaceMember, workspace, queryParam)
+	if err != nil {
+		api.HandleInternalError(resp, nil, err)
+		return
+	}
 
-	result, err := h.tenant.ListNamespaces(user, workspace, queryParam)
+	resp.WriteEntity(result)
+}
+
+func (h *tenantHandler) ListNamespaces(req *restful.Request, resp *restful.Response) {
+	workspace := req.PathParameter("workspace")
+	queryParam := query.ParseQueryParameter(req)
+
+	var workspaceMember user.Info
+	if username := req.PathParameter("workspacemember"); username != "" {
+		workspaceMember = &user.DefaultInfo{
+			Name: username,
+		}
+	} else {
+		requestUser, ok := request.UserFrom(req.Request.Context())
+		if !ok {
+			err := fmt.Errorf("cannot obtain user info")
+			klog.Errorln(err)
+			api.HandleForbidden(resp, nil, err)
+			return
+		}
+		workspaceMember = requestUser
+	}
+
+	result, err := h.tenant.ListNamespaces(workspaceMember, workspace, queryParam)
+	if err != nil {
+		api.HandleInternalError(resp, nil, err)
+		return
+	}
+
+	resp.WriteEntity(result)
+}
+
+func (h *tenantHandler) ListDevOpsProjects(req *restful.Request, resp *restful.Response) {
+	workspace := req.PathParameter("workspace")
+	queryParam := query.ParseQueryParameter(req)
+
+	var workspaceMember user.Info
+	if username := req.PathParameter("workspacemember"); username != "" {
+		workspaceMember = &user.DefaultInfo{
+			Name: username,
+		}
+	} else {
+		requestUser, ok := request.UserFrom(req.Request.Context())
+		if !ok {
+			err := fmt.Errorf("cannot obtain user info")
+			klog.Errorln(err)
+			api.HandleForbidden(resp, nil, err)
+			return
+		}
+		workspaceMember = requestUser
+	}
+
+	result, err := h.tenant.ListDevOpsProjects(workspaceMember, workspace, queryParam)
 
 	if err != nil {
 		api.HandleInternalError(resp, nil, err)
@@ -418,18 +493,15 @@ func (h *tenantHandler) PatchNamespace(request *restful.Request, response *restf
 
 func (h *tenantHandler) PatchWorkspace(request *restful.Request, response *restful.Response) {
 	workspaceName := request.PathParameter("workspace")
-
-	var workspace tenantv1alpha2.WorkspaceTemplate
-	err := request.ReadEntity(&workspace)
+	var data json.RawMessage
+	err := request.ReadEntity(&data)
 	if err != nil {
 		klog.Error(err)
 		api.HandleBadRequest(response, request, err)
 		return
 	}
 
-	workspace.Name = workspaceName
-
-	patched, err := h.tenant.PatchWorkspace(&workspace)
+	patched, err := h.tenant.PatchWorkspace(workspaceName, data)
 
 	if err != nil {
 		klog.Error(err)

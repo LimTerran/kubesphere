@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package elasticsearch
 
 import (
@@ -41,7 +57,8 @@ func (e Error) Error() string {
 type ClientV5 es5.Client
 
 func (c *ClientV5) ExSearch(r *Request) (*Response, error) {
-	return c.parse(c.Search(c.Search.WithIndex(r.Index), c.Search.WithBody(r.Body)))
+	return c.parse(c.Search(c.Search.WithIndex(r.Index), c.Search.WithBody(r.Body),
+		c.Search.WithIgnoreUnavailable(true)))
 }
 func (c *ClientV5) parse(resp *es5api.Response, err error) (*Response, error) {
 	if err != nil {
@@ -85,7 +102,8 @@ func (c *ClientV5) Version() (string, error) {
 type ClientV6 es6.Client
 
 func (c *ClientV6) ExSearch(r *Request) (*Response, error) {
-	return c.parse(c.Search(c.Search.WithIndex(r.Index), c.Search.WithBody(r.Body)))
+	return c.parse(c.Search(c.Search.WithIndex(r.Index), c.Search.WithBody(r.Body),
+		c.Search.WithIgnoreUnavailable(true)))
 }
 func (c *ClientV6) parse(resp *es6api.Response, err error) (*Response, error) {
 	if err != nil {
@@ -96,7 +114,7 @@ func (c *ClientV6) parse(resp *es6api.Response, err error) (*Response, error) {
 		return nil, fmt.Errorf(resp.String())
 	}
 	var r struct {
-		Hits *struct {
+		Hits struct {
 			Total int64               `json:"total"`
 			Hits  jsoniter.RawMessage `json:"hits"`
 		} `json:"hits"`
@@ -114,7 +132,8 @@ func (c *ClientV6) parse(resp *es6api.Response, err error) (*Response, error) {
 type ClientV7 es7.Client
 
 func (c *ClientV7) ExSearch(r *Request) (*Response, error) {
-	return c.parse(c.Search(c.Search.WithIndex(r.Index), c.Search.WithBody(r.Body)))
+	return c.parse(c.Search(c.Search.WithIndex(r.Index), c.Search.WithBody(r.Body),
+		c.Search.WithIgnoreUnavailable(true)))
 }
 func (c *ClientV7) parse(resp *es7api.Response, err error) (*Response, error) {
 	if err != nil {
@@ -125,7 +144,7 @@ func (c *ClientV7) parse(resp *es7api.Response, err error) (*Response, error) {
 		return nil, fmt.Errorf(resp.String())
 	}
 	var r struct {
-		Hits *struct {
+		Hits struct {
 			Total struct {
 				Value int64 `json:"value"`
 			} `json:"total"`

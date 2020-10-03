@@ -1,6 +1,23 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package cluster
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	v1 "k8s.io/api/core/v1"
@@ -53,6 +70,7 @@ const (
 
 	kubefedNamespace  = "kube-federation-system"
 	openpitrixRuntime = "openpitrix.io/runtime"
+	kubesphereManaged = "kubesphere.io/managed"
 
 	// Actually host cluster name can be anything, there is only necessary when calling JoinFederation function
 	hostClusterName = "kubesphere"
@@ -70,7 +88,34 @@ const (
 
 	// proxy format
 	proxyFormat = "%s/api/v1/namespaces/kubesphere-system/services/:ks-apiserver:80/proxy/%s"
+
+	// mulitcluster configuration name
+	configzMultiCluster = "multicluster"
 )
+
+// Cluster template for reconcile host cluster if there is none.
+var hostCluster = &clusterv1alpha1.Cluster{
+	ObjectMeta: metav1.ObjectMeta{
+		Name: "host",
+		Annotations: map[string]string{
+			"kubesphere.io/description": "Automatically created by kubesphere, " +
+				"we encourage you to use host cluster for clusters management only, " +
+				"deploy workloads to member clusters.",
+		},
+		Labels: map[string]string{
+			clusterv1alpha1.HostCluster: "",
+			kubesphereManaged:           "true",
+		},
+	},
+	Spec: clusterv1alpha1.ClusterSpec{
+		JoinFederation: true,
+		Enable:         true,
+		Provider:       "kubesphere",
+		Connection: clusterv1alpha1.Connection{
+			Type: clusterv1alpha1.ConnectionTypeDirect,
+		},
+	},
+}
 
 // ClusterData stores cluster client
 type clusterData struct {
@@ -92,6 +137,7 @@ type clusterController struct {
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
 
+	// build this only for host cluster
 	client     kubernetes.Interface
 	hostConfig *rest.Config
 
@@ -176,11 +222,17 @@ func (c *clusterController) Run(workers int, stopCh <-chan struct{}) error {
 		go wait.Until(c.worker, c.workerLoopPeriod, stopCh)
 	}
 
+	// refresh cluster configz every 2 minutes
 	go wait.Until(func() {
 		if err := c.syncStatus(); err != nil {
 			klog.Errorf("Error periodically sync cluster status, %v", err)
 		}
-	}, 5*time.Minute, stopCh)
+
+		if err := c.reconcileHostCluster(); err != nil {
+			klog.Errorf("Error create host cluster, error %v", err)
+		}
+
+	}, 2*time.Minute, stopCh)
 
 	<-stopCh
 	return nil
@@ -254,6 +306,49 @@ func (c *clusterController) syncStatus() error {
 	}
 
 	return nil
+}
+
+// reconcileHostCluster will create a host cluster if there are no clusters labeled 'cluster-role.kubesphere.io/host'
+func (c *clusterController) reconcileHostCluster() error {
+	clusters, err := c.clusterLister.List(labels.SelectorFromSet(labels.Set{clusterv1alpha1.HostCluster: ""}))
+	if err != nil {
+		return err
+	}
+
+	hostKubeConfig, err := buildKubeconfigFromRestConfig(c.hostConfig)
+	if err != nil {
+		return err
+	}
+
+	// no host cluster, create one
+	if len(clusters) == 0 {
+		hostCluster.Spec.Connection.KubeConfig = hostKubeConfig
+		_, err = c.clusterClient.Create(hostCluster)
+		return err
+	} else if len(clusters) > 1 {
+		return fmt.Errorf("there MUST not be more than one host clusters, while there are %d", len(clusters))
+	}
+
+	// only deal with cluster managed by kubesphere
+	cluster := clusters[0]
+	managedByKubesphere, ok := cluster.Labels[kubesphereManaged]
+	if !ok || managedByKubesphere != "true" {
+		return nil
+	}
+
+	// no kubeconfig, not likely to happen
+	if len(cluster.Spec.Connection.KubeConfig) == 0 {
+		cluster.Spec.Connection.KubeConfig = hostKubeConfig
+	} else {
+		// if kubeconfig are the same, then there is nothing to do
+		if bytes.Equal(cluster.Spec.Connection.KubeConfig, hostKubeConfig) {
+			return nil
+		}
+	}
+
+	// update host cluster config
+	_, err = c.clusterClient.Update(cluster)
+	return err
 }
 
 func (c *clusterController) syncCluster(key string) error {
@@ -524,6 +619,14 @@ func (c *clusterController) syncCluster(key string) error {
 			cluster.Status.Configz = configz
 		}
 
+		// label cluster host cluster if configz["multicluster"]==true, this is
+		if mc, ok := configz[configzMultiCluster]; ok && mc && c.checkIfClusterIsHostCluster(nodes) {
+			if cluster.Labels == nil {
+				cluster.Labels = make(map[string]string)
+			}
+			cluster.Labels[clusterv1alpha1.HostCluster] = ""
+		}
+
 		clusterReadyCondition := clusterv1alpha1.ClusterCondition{
 			Type:               clusterv1alpha1.ClusterReady,
 			Status:             v1.ConditionTrue,
@@ -577,6 +680,27 @@ func (c *clusterController) syncCluster(key string) error {
 	return nil
 }
 
+func (c *clusterController) checkIfClusterIsHostCluster(memberClusterNodes *v1.NodeList) bool {
+	hostNodes, err := c.client.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		return false
+	}
+
+	if hostNodes == nil || memberClusterNodes == nil {
+		return false
+	}
+
+	if len(hostNodes.Items) != len(memberClusterNodes.Items) {
+		return false
+	}
+
+	if len(hostNodes.Items) > 0 && (hostNodes.Items[0].Status.NodeInfo.MachineID != memberClusterNodes.Items[0].Status.NodeInfo.MachineID) {
+		return false
+	}
+
+	return true
+}
+
 // tryToFetchKubeSphereComponents will send requests to member cluster configz api using kube-apiserver proxy way
 func (c *clusterController) tryToFetchKubeSphereComponents(host string, transport http.RoundTripper) (map[string]bool, error) {
 	client := http.Client{
@@ -615,6 +739,16 @@ func (c *clusterController) addCluster(obj interface{}) {
 	}
 
 	c.queue.Add(key)
+}
+
+func hasHostClusterLabel(cluster *clusterv1alpha1.Cluster) bool {
+	if cluster.Labels == nil || len(cluster.Labels) == 0 {
+		return false
+	}
+
+	_, ok := cluster.Labels[clusterv1alpha1.HostCluster]
+
+	return ok
 }
 
 func (c *clusterController) handleErr(err error, key interface{}) {
@@ -671,16 +805,6 @@ func (c *clusterController) updateClusterCondition(cluster *clusterv1alpha1.Clus
 	}
 }
 
-func isHostCluster(cluster *clusterv1alpha1.Cluster) bool {
-	for k, v := range cluster.Annotations {
-		if k == clusterv1alpha1.IsHostCluster && v == "true" {
-			return true
-		}
-	}
-
-	return false
-}
-
 // joinFederation joins a cluster into federation clusters.
 // return nil error if kubefed cluster already exists.
 func (c *clusterController) joinFederation(clusterConfig *rest.Config, joiningClusterName string, labels map[string]string) (*fedv1b1.KubeFedCluster, error) {
@@ -699,14 +823,40 @@ func (c *clusterController) joinFederation(clusterConfig *rest.Config, joiningCl
 }
 
 // unJoinFederation unjoins a cluster from federation control plane.
+// It will first do normal unjoin process, if maximum retries reached, it will skip
+// member cluster resource deletion, only delete resources in host cluster.
 func (c *clusterController) unJoinFederation(clusterConfig *rest.Config, unjoiningClusterName string) error {
-	return unjoinCluster(c.hostConfig,
-		clusterConfig,
-		kubefedNamespace,
-		hostClusterName,
-		unjoiningClusterName,
-		true,
-		false)
+	localMaxRetries := 5
+	retries := 0
+
+	for {
+		err := unjoinCluster(c.hostConfig,
+			clusterConfig,
+			kubefedNamespace,
+			hostClusterName,
+			unjoiningClusterName,
+			true,
+			false,
+			false)
+		if err != nil {
+			klog.Errorf("Failed to unJoin federation for cluster %s, error %v", unjoiningClusterName, err)
+		} else {
+			return nil
+		}
+
+		retries += 1
+		if retries >= localMaxRetries {
+			err = unjoinCluster(c.hostConfig,
+				clusterConfig,
+				kubefedNamespace,
+				hostClusterName,
+				unjoiningClusterName,
+				true,
+				false,
+				true)
+			return err
+		}
+	}
 }
 
 // allocatePort find a available port between [portRangeMin, portRangeMax] in maximumRetries

@@ -48,7 +48,7 @@ const (
 	// SSHAuthPrivateKey is the key of the passphrase for SecretTypeSSHAuth secrets
 	SSHAuthPassphraseKey = "passphrase"
 	// SSHAuthPrivateKey is the key of the privatekey for SecretTypeSSHAuth secrets
-	SSHAuthPrivateKey = "privatekey"
+	SSHAuthPrivateKey = "private_key"
 
 	// SecretTypeSecretText contains data.
 	//
@@ -64,7 +64,7 @@ const (
 	// - Secret.Data["secret"] - secret
 	SecretTypeKubeConfig v1.SecretType = DevOpsCredentialPrefix + "kubeconfig"
 	// KubeConfigSecretKey is the key of the secret for SecretTypeKubeConfig secrets
-	KubeConfigSecretKey = "secret"
+	KubeConfigSecretKey = "content"
 	//	CredentialAutoSyncAnnoKey is used to indicate whether the secret is automatically synchronized to devops.
 	//	In the old version, the credential is stored in jenkins and cannot be obtained.
 	//	This field is set to ensure that the secret is not overwritten by a nil value.

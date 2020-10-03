@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package nsnetworkpolicy
 
 import (
@@ -29,6 +45,7 @@ import (
 	"kubesphere.io/kubesphere/pkg/constants"
 	"kubesphere.io/kubesphere/pkg/controller/network"
 	"kubesphere.io/kubesphere/pkg/controller/network/provider"
+	options "kubesphere.io/kubesphere/pkg/simple/client/network"
 )
 
 const (
@@ -77,6 +94,7 @@ type NSNetworkPolicyController struct {
 	namespaceInformerSynced cache.InformerSynced
 
 	provider provider.NsNetworkPolicyProvider
+	options  options.NSNPOptions
 
 	nsQueue   workqueue.RateLimitingInterface
 	nsnpQueue workqueue.RateLimitingInterface
@@ -301,7 +319,7 @@ func (c *NSNetworkPolicyController) generateNodeRule() (netv1.NetworkPolicyIngre
 	return rule, nil
 }
 
-func generateNSNP(workspace string, namespace string, matchWorkspace bool) *netv1.NetworkPolicy {
+func (c *NSNetworkPolicyController) generateNSNP(workspace string, namespace string, matchWorkspace bool) *netv1.NetworkPolicy {
 	policy := &netv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      AnnotationNPNAME,
@@ -326,6 +344,17 @@ func generateNSNP(workspace string, namespace string, matchWorkspace bool) *netv
 		policy.Spec.Ingress[0].From[0].NamespaceSelector.MatchLabels[constants.WorkspaceLabelKey] = workspace
 	} else {
 		policy.Spec.Ingress[0].From[0].NamespaceSelector.MatchLabels[constants.NamespaceLabelKey] = namespace
+	}
+
+	for _, allowedIngressNamespace := range c.options.AllowedIngressNamespaces {
+		defaultAllowedIngress := netv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					constants.NamespaceLabelKey: allowedIngressNamespace,
+				},
+			},
+		}
+		policy.Spec.Ingress[0].From = append(policy.Spec.Ingress[0].From, defaultAllowedIngress)
 	}
 
 	return policy
@@ -384,8 +413,8 @@ func (c *NSNetworkPolicyController) addNamespace(obj interface{}) {
 	c.nsEnqueue(ns)
 }
 
-func isNetworkIsolateEnabled(ns *corev1.Namespace) bool {
-	if ns.Annotations[NamespaceNPAnnotationKey] == NamespaceNPAnnotationEnabled {
+func namespaceNetworkIsolateEnabled(ns *corev1.Namespace) bool {
+	if ns.Annotations != nil && ns.Annotations[NamespaceNPAnnotationKey] == NamespaceNPAnnotationEnabled {
 		return true
 	}
 
@@ -429,9 +458,9 @@ func (c *NSNetworkPolicyController) syncNs(key string) error {
 	matchWorkspace := false
 	delete := false
 	nsnpList, err := c.informer.Lister().NamespaceNetworkPolicies(ns.Name).List(labels.Everything())
-	if isNetworkIsolateEnabled(ns) {
+	if namespaceNetworkIsolateEnabled(ns) {
 		matchWorkspace = false
-	} else if wksp.Spec.NetworkIsolation {
+	} else if workspaceNetworkIsolationEnabled(wksp) {
 		matchWorkspace = true
 	} else {
 		delete = true
@@ -445,7 +474,7 @@ func (c *NSNetworkPolicyController) syncNs(key string) error {
 		}
 	}
 
-	policy := generateNSNP(workspaceName, ns.Name, matchWorkspace)
+	policy := c.generateNSNP(workspaceName, ns.Name, matchWorkspace)
 	if shouldAddDNSRule(nsnpList) {
 		ruleDNS, err := generateDNSRule([]string{DNSLocalIP})
 		if err != nil {
@@ -573,6 +602,13 @@ func (c *NSNetworkPolicyController) processNSNPWorkItem() bool {
 	return true
 }
 
+func workspaceNetworkIsolationEnabled(wksp *workspacev1alpha1.Workspace) bool {
+	if wksp.Spec.NetworkIsolation != nil && *wksp.Spec.NetworkIsolation {
+		return true
+	}
+	return false
+}
+
 // NewnamespacenpController returns a controller which manages NSNSP objects.
 func NewNSNetworkPolicyController(
 	client kubernetes.Interface,
@@ -582,7 +618,8 @@ func NewNSNetworkPolicyController(
 	nodeInformer v1.NodeInformer,
 	workspaceInformer workspace.WorkspaceInformer,
 	namespaceInformer v1.NamespaceInformer,
-	policyProvider provider.NsNetworkPolicyProvider) *NSNetworkPolicyController {
+	policyProvider provider.NsNetworkPolicyProvider,
+	options options.NSNPOptions) *NSNetworkPolicyController {
 
 	controller := &NSNetworkPolicyController{
 		client:                  client,
@@ -600,6 +637,7 @@ func NewNSNetworkPolicyController(
 		provider:                policyProvider,
 		nsQueue:                 workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "namespace"),
 		nsnpQueue:               workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "namespacenp"),
+		options:                 options,
 	}
 
 	workspaceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -607,7 +645,7 @@ func NewNSNetworkPolicyController(
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			old := oldObj.(*workspacev1alpha1.Workspace)
 			new := newObj.(*workspacev1alpha1.Workspace)
-			if old.Spec.NetworkIsolation == new.Spec.NetworkIsolation {
+			if workspaceNetworkIsolationEnabled(old) == workspaceNetworkIsolationEnabled(new) {
 				return
 			}
 			controller.addWorkspace(newObj)

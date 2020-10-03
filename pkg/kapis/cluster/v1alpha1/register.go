@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -24,7 +40,7 @@ func AddToContainer(container *restful.Container,
 	agentImage string) error {
 
 	webservice := runtime.NewWebService(GroupVersion)
-	h := NewHandler(k8sInformers.Core().V1().Services().Lister(), ksInformers.Cluster().V1alpha1().Clusters().Lister(), proxyService, proxyAddress, agentImage)
+	h := newHandler(k8sInformers.Core().V1().Services().Lister(), ksInformers.Cluster().V1alpha1().Clusters().Lister(), proxyService, proxyAddress, agentImage)
 
 	// returns deployment yaml for cluster agent
 	webservice.Route(webservice.GET("/clusters/{cluster}/agent/deployment").
@@ -36,7 +52,7 @@ func AddToContainer(container *restful.Container,
 	webservice.Route(webservice.POST("/clusters/validation").
 		Doc("").
 		Param(webservice.BodyParameter("cluster", "cluster specification")).
-		To(h.ValidateCluster).
+		To(h.validateCluster).
 		Returns(http.StatusOK, api.StatusOK, nil))
 
 	container.Add(webservice)

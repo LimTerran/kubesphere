@@ -4,13 +4,13 @@ on:
   push:
     branches:
       - 'master'
-      - 'dev'
+      - 'release*'
     tags:
-      - 'release-*'
+      - 'v*'
   pull_request:
     branches:
       - 'master'
-      - 'dev'
+      - 'release*'
 
 jobs:
   build:
@@ -51,7 +51,7 @@ jobs:
           file: ./coverage.txt
           flags: unittests
           name: codecov-umbrella
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
       - name: Get branch name
         id: extract_branch

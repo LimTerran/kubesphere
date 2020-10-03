@@ -23,16 +23,22 @@ import (
 	"io"
 	"io/ioutil"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 	"kubesphere.io/kubesphere/pkg/api"
 	"kubesphere.io/kubesphere/pkg/apis/devops/v1alpha3"
+	devopsv1alpha3 "kubesphere.io/kubesphere/pkg/apis/devops/v1alpha3"
 	tenantv1alpha1 "kubesphere.io/kubesphere/pkg/apis/tenant/v1alpha1"
+	"kubesphere.io/kubesphere/pkg/apiserver/query"
 	kubesphere "kubesphere.io/kubesphere/pkg/client/clientset/versioned"
 	"kubesphere.io/kubesphere/pkg/client/informers/externalversions"
+	resourcesV1alpha3 "kubesphere.io/kubesphere/pkg/models/resources/v1alpha3"
 	"kubesphere.io/kubesphere/pkg/simple/client/devops"
 	"net/http"
 	"sync"
@@ -59,7 +65,7 @@ type DevopsOperator interface {
 	GetCredentialObj(projectName string, secretName string) (*v1.Secret, error)
 	DeleteCredentialObj(projectName string, secretName string) error
 	UpdateCredentialObj(projectName string, secret *v1.Secret) (*v1.Secret, error)
-	ListCredentialObj(projectName string, limit, offset int) (api.ListResult, error)
+	ListCredentialObj(projectName string, query *query.Query) (api.ListResult, error)
 
 	GetPipeline(projectName, pipelineName string, req *http.Request) (*devops.Pipeline, error)
 	ListPipelines(req *http.Request) (*devops.PipelineList, error)
@@ -143,7 +149,30 @@ func convertToHttpParameters(req *http.Request) *devops.HttpParameters {
 }
 
 func (d devopsOperator) CreateDevOpsProject(workspace string, project *v1alpha3.DevOpsProject) (*v1alpha3.DevOpsProject, error) {
-	project.Annotations[tenantv1alpha1.WorkspaceLabel] = workspace
+	// All resources of devops project belongs to the namespace of the same name
+	// The devops project name is used as the name of the admin namespace, using generateName to avoid conflicts
+	if project.GenerateName == "" {
+		err := errors.NewInvalid(devopsv1alpha3.SchemeGroupVersion.WithKind(devopsv1alpha3.ResourceKindDevOpsProject).GroupKind(),
+			"", []*field.Error{field.Required(field.NewPath("metadata.generateName"), "generateName is required")})
+		klog.Error(err)
+		return nil, err
+	}
+	// generateName is used as displayName
+	// ensure generateName is unique in workspace scope
+	if unique, err := d.isGenerateNameUnique(workspace, project.GenerateName); err != nil {
+		return nil, err
+	} else if !unique {
+		err = errors.NewConflict(devopsv1alpha3.Resource(devopsv1alpha3.ResourceSingularDevOpsProject),
+			project.GenerateName, fmt.Errorf(project.GenerateName, fmt.Errorf("a devops project named %s already exists in the workspace", project.GenerateName)))
+		klog.Error(err)
+		return nil, err
+	}
+	// metadata override
+	if project.Labels == nil {
+		project.Labels = make(map[string]string, 0)
+	}
+	project.Name = ""
+	project.Labels[tenantv1alpha1.WorkspaceLabel] = workspace
 	return d.ksclient.DevopsV1alpha3().DevOpsProjects().Create(project)
 }
 
@@ -156,7 +185,10 @@ func (d devopsOperator) DeleteDevOpsProject(workspace string, projectName string
 }
 
 func (d devopsOperator) UpdateDevOpsProject(workspace string, project *v1alpha3.DevOpsProject) (*v1alpha3.DevOpsProject, error) {
-	project.Annotations[tenantv1alpha1.WorkspaceLabel] = workspace
+	if project.Labels == nil {
+		project.Labels = make(map[string]string, 0)
+	}
+	project.Labels[tenantv1alpha1.WorkspaceLabel] = workspace
 	return d.ksclient.DevopsV1alpha3().DevOpsProjects().Update(project)
 }
 
@@ -242,6 +274,7 @@ func (d devopsOperator) ListPipelineObj(projectName string, limit, offset int) (
 //credentialobj in crd
 func (d devopsOperator) CreateCredentialObj(projectName string, secret *v1.Secret) (*v1.Secret, error) {
 	projectObj, err := d.ksInformers.Devops().V1alpha3().DevOpsProjects().Lister().Get(projectName)
+	secret.Annotations[devopsv1alpha3.CredentialAutoSyncAnnoKey] = "true"
 	if err != nil {
 		return nil, err
 	}
@@ -272,19 +305,16 @@ func (d devopsOperator) UpdateCredentialObj(projectName string, secret *v1.Secre
 	return d.k8sclient.CoreV1().Secrets(projectObj.Status.AdminNamespace).Update(secret)
 }
 
-func (d devopsOperator) ListCredentialObj(projectName string, limit, offset int) (api.ListResult, error) {
+func (d devopsOperator) ListCredentialObj(projectName string, query *query.Query) (api.ListResult, error) {
 	projectObj, err := d.ksInformers.Devops().V1alpha3().DevOpsProjects().Lister().Get(projectName)
 	if err != nil {
 		return api.ListResult{}, err
 	}
-
-	credentialList, err := d.k8sInformers.Core().V1().Secrets().Lister().Secrets(projectObj.Status.AdminNamespace).List(labels.Everything())
+	credentialObjList, err := d.k8sInformers.Core().V1().Secrets().Lister().Secrets(projectObj.Status.AdminNamespace).List(query.Selector())
 	if err != nil {
 		return api.ListResult{}, err
 	}
-
-	items := make([]interface{}, 0)
-	var result []interface{}
+	var result []runtime.Object
 
 	credentialTypeList := []v1.SecretType{
 		v1alpha3.SecretTypeBasicAuth,
@@ -292,22 +322,41 @@ func (d devopsOperator) ListCredentialObj(projectName string, limit, offset int)
 		v1alpha3.SecretTypeSecretText,
 		v1alpha3.SecretTypeKubeConfig,
 	}
-	for _, credential := range credentialList {
+	for _, credential := range credentialObjList {
 		for _, credentialType := range credentialTypeList {
 			if credential.Type == credentialType {
-				result = append(result, *credential)
+				result = append(result, credential)
 			}
 		}
 	}
 
-	if limit == -1 || limit+offset > len(result) {
-		limit = len(result) - offset
+	return *resourcesV1alpha3.DefaultList(result, query, d.compareCredentialObj, d.filterCredentialObj), nil
+}
+
+func (d devopsOperator) compareCredentialObj(left runtime.Object, right runtime.Object, field query.Field) bool {
+
+	leftObj, ok := left.(*v1.Secret)
+	if !ok {
+		return false
 	}
-	items = result[offset : offset+limit]
-	if items == nil {
-		items = []interface{}{}
+
+	rightObj, ok := right.(*v1.Secret)
+	if !ok {
+		return false
 	}
-	return api.ListResult{TotalItems: len(result), Items: items}, nil
+
+	return resourcesV1alpha3.DefaultObjectMetaCompare(leftObj.ObjectMeta, rightObj.ObjectMeta, field)
+}
+
+func (d devopsOperator) filterCredentialObj(object runtime.Object, filter query.Filter) bool {
+
+	secret, ok := object.(*v1.Secret)
+
+	if !ok {
+		return false
+	}
+
+	return resourcesV1alpha3.DefaultObjectMetaFilter(secret.ObjectMeta, filter)
 }
 
 // others
@@ -864,6 +913,21 @@ func (d devopsOperator) ToJson(req *http.Request) (*devops.ResJson, error) {
 	}
 
 	return res, err
+}
+
+func (d devopsOperator) isGenerateNameUnique(workspace, generateName string) (bool, error) {
+	selector := labels.Set{tenantv1alpha1.WorkspaceLabel: workspace}
+	projects, err := d.ksInformers.Devops().V1alpha3().DevOpsProjects().Lister().List(labels.SelectorFromSet(selector))
+	if err != nil {
+		klog.Error(err)
+		return false, err
+	}
+	for _, p := range projects {
+		if p.GenerateName == generateName {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func getInputReqBody(reqBody io.ReadCloser) (newReqBody io.ReadCloser, err error) {

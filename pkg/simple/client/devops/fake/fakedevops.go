@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package fake
 
 import (
@@ -539,4 +555,40 @@ func (d *Devops) GetProjectPipelineConfig(projectId, pipelineId string) (*devops
 	}
 
 	return d.Pipelines[projectId][pipelineId], nil
+}
+
+func (d *Devops) AddGlobalRole(roleName string, ids devops.GlobalPermissionIds, overwrite bool) error {
+	return nil
+}
+
+func (d *Devops) AddProjectRole(roleName string, pattern string, ids devops.ProjectPermissionIds, overwrite bool) error {
+	return nil
+}
+
+func (d *Devops) DeleteProjectRoles(roleName ...string) error {
+	return nil
+}
+
+func (d *Devops) AssignProjectRole(roleName string, sid string) error {
+	return nil
+}
+
+func (d *Devops) UnAssignProjectRole(roleName string, sid string) error {
+	return nil
+}
+
+func (d *Devops) AssignGlobalRole(roleName string, sid string) error {
+	return nil
+}
+
+func (d *Devops) UnAssignGlobalRole(roleName string, sid string) error {
+	return nil
+}
+
+func (d *Devops) DeleteUserInProject(sid string) error {
+	return nil
+}
+
+func (d *Devops) GetGlobalRole(roleName string) (string, error) {
+	return "", nil
 }

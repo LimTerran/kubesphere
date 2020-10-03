@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package jenkins
 
 import (
@@ -69,6 +85,7 @@ func (p *Pipeline) GetPipeline() (*devops.Pipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var pipeline devops.Pipeline
 
@@ -127,6 +144,7 @@ func (p *Pipeline) GetPipelineRun() (*devops.PipelineRun, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var pipelineRun devops.PipelineRun
@@ -142,6 +160,7 @@ func (p *Pipeline) ListPipelineRuns() (*devops.PipelineRunList, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var pipelineRunList devops.PipelineRunList
@@ -150,6 +169,12 @@ func (p *Pipeline) ListPipelineRuns() (*devops.PipelineRunList, error) {
 		klog.Error(err)
 		return nil, err
 	}
+	total, err := p.searchPipelineRunsCount()
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+	pipelineRunList.Total = total
 	return &pipelineRunList, err
 }
 
@@ -158,9 +183,12 @@ func (p *Pipeline) searchPipelineRunsCount() (int, error) {
 	query.Set("start", "0")
 	query.Set("limit", "1000")
 	query.Set("depth", "-1")
-	//formatUrl := fmt.Sprintf(SearchPipelineRunUrl, projectName, pipelineName)
-
-	res, err := p.Jenkins.SendPureRequest(ListPipelineRunUrl+query.Encode(), p.HttpParameters)
+	p.HttpParameters.Url.RawQuery = query.Encode()
+	u, err := url.Parse(p.Path)
+	if err != nil {
+		return 0, err
+	}
+	res, err := p.Jenkins.SendPureRequest(u.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
 		return 0, err
@@ -178,6 +206,7 @@ func (p *Pipeline) StopPipeline() (*devops.StopPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var stopPipeline devops.StopPipeline
@@ -194,6 +223,7 @@ func (p *Pipeline) ReplayPipeline() (*devops.ReplayPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var replayPipeline devops.ReplayPipeline
@@ -210,6 +240,7 @@ func (p *Pipeline) RunPipeline() (*devops.RunPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var runPipeline devops.RunPipeline
@@ -226,6 +257,7 @@ func (p *Pipeline) GetArtifacts() ([]devops.Artifacts, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var artifacts []devops.Artifacts
@@ -276,6 +308,7 @@ func (p *Pipeline) GetPipelineRunNodes() ([]devops.PipelineRunNodes, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var pipelineRunNodes []devops.PipelineRunNodes
@@ -301,6 +334,7 @@ func (p *Pipeline) GetBranchPipeline() (*devops.BranchPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchPipeline devops.BranchPipeline
 	err = json.Unmarshal(res, &branchPipeline)
@@ -316,6 +350,7 @@ func (p *Pipeline) GetBranchPipelineRun() (*devops.PipelineRun, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchPipelineRun devops.PipelineRun
 	err = json.Unmarshal(res, &branchPipelineRun)
@@ -331,6 +366,7 @@ func (p *Pipeline) StopBranchPipeline() (*devops.StopPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchStopPipeline devops.StopPipeline
 	err = json.Unmarshal(res, &branchStopPipeline)
@@ -346,6 +382,7 @@ func (p *Pipeline) ReplayBranchPipeline() (*devops.ReplayPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchReplayPipeline devops.ReplayPipeline
 	err = json.Unmarshal(res, &branchReplayPipeline)
@@ -361,6 +398,7 @@ func (p *Pipeline) RunBranchPipeline() (*devops.RunPipeline, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchRunPipeline devops.RunPipeline
 	err = json.Unmarshal(res, &branchRunPipeline)
@@ -376,6 +414,7 @@ func (p *Pipeline) GetBranchArtifacts() ([]devops.Artifacts, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var artifacts []devops.Artifacts
@@ -410,6 +449,7 @@ func (p *Pipeline) GetBranchNodeSteps() ([]devops.NodeSteps, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchNodeSteps []devops.NodeSteps
 	err = json.Unmarshal(res, &branchNodeSteps)
@@ -425,6 +465,7 @@ func (p *Pipeline) GetBranchPipelineRunNodes() ([]devops.BranchPipelineRunNodes,
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var branchPipelineRunNodes []devops.BranchPipelineRunNodes
 	err = json.Unmarshal(res, &branchPipelineRunNodes)
@@ -449,6 +490,7 @@ func (p *Pipeline) GetPipelineBranch() (*devops.PipelineBranch, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var pipelineBranch devops.PipelineBranch
 	err = json.Unmarshal(res, &pipelineBranch)
@@ -482,6 +524,7 @@ func (p *Pipeline) GetCrumb() (*devops.Crumb, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var crumb devops.Crumb
 	err = json.Unmarshal(res, &crumb)
@@ -497,6 +540,7 @@ func (p *Pipeline) GetSCMServers() ([]devops.SCMServer, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var SCMServer []devops.SCMServer
 	err = json.Unmarshal(res, &SCMServer)
@@ -512,6 +556,7 @@ func (p *Pipeline) GetSCMOrg() ([]devops.SCMOrg, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var SCMOrg []devops.SCMOrg
 	err = json.Unmarshal(res, &SCMOrg)
@@ -527,6 +572,7 @@ func (p *Pipeline) GetOrgRepo() (devops.OrgRepo, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return devops.OrgRepo{}, err
 	}
 	var OrgRepo devops.OrgRepo
 	err = json.Unmarshal(res, &OrgRepo)
@@ -542,6 +588,7 @@ func (p *Pipeline) CreateSCMServers() (*devops.SCMServer, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 	var SCMServer devops.SCMServer
 	err = json.Unmarshal(res, &SCMServer)
@@ -575,6 +622,7 @@ func (p *Pipeline) Validate() (*devops.Validates, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var validates devops.Validates
@@ -591,6 +639,7 @@ func (p *Pipeline) CheckScriptCompile() (*devops.CheckScript, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	// Jenkins will return different struct according to different results.
@@ -693,6 +742,7 @@ func (p *Pipeline) ToJenkinsfile() (*devops.ResJenkinsfile, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var jenkinsfile devops.ResJenkinsfile
@@ -709,6 +759,7 @@ func (p *Pipeline) ToJson() (*devops.ResJson, error) {
 	res, err := p.Jenkins.SendPureRequest(p.Path, p.HttpParameters)
 	if err != nil {
 		klog.Error(err)
+		return nil, err
 	}
 
 	var toJson devops.ResJson

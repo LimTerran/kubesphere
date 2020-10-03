@@ -27,18 +27,20 @@ import (
 	unionauth "k8s.io/apiserver/pkg/authentication/request/union"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/klog"
+	clusterv1alpha1 "kubesphere.io/kubesphere/pkg/apis/cluster/v1alpha1"
+	iamv1alpha2 "kubesphere.io/kubesphere/pkg/apis/iam/v1alpha2"
+	tenantv1alpha1 "kubesphere.io/kubesphere/pkg/apis/tenant/v1alpha1"
+	typesv1beta1 "kubesphere.io/kubesphere/pkg/apis/types/v1beta1"
 	audit "kubesphere.io/kubesphere/pkg/apiserver/auditing"
 	"kubesphere.io/kubesphere/pkg/apiserver/authentication/authenticators/basic"
 	"kubesphere.io/kubesphere/pkg/apiserver/authentication/authenticators/jwttoken"
 	"kubesphere.io/kubesphere/pkg/apiserver/authentication/request/anonymous"
 	"kubesphere.io/kubesphere/pkg/apiserver/authentication/request/basictoken"
 	"kubesphere.io/kubesphere/pkg/apiserver/authentication/request/bearertoken"
-	"kubesphere.io/kubesphere/pkg/apiserver/authentication/token"
 	"kubesphere.io/kubesphere/pkg/apiserver/authorization/authorizer"
 	"kubesphere.io/kubesphere/pkg/apiserver/authorization/authorizerfactory"
 	authorizationoptions "kubesphere.io/kubesphere/pkg/apiserver/authorization/options"
 	"kubesphere.io/kubesphere/pkg/apiserver/authorization/path"
-	"kubesphere.io/kubesphere/pkg/apiserver/authorization/proxy"
 	unionauthorizer "kubesphere.io/kubesphere/pkg/apiserver/authorization/union"
 	apiserverconfig "kubesphere.io/kubesphere/pkg/apiserver/config"
 	"kubesphere.io/kubesphere/pkg/apiserver/dispatch"
@@ -69,16 +71,14 @@ import (
 	"kubesphere.io/kubesphere/pkg/simple/client/devops"
 	"kubesphere.io/kubesphere/pkg/simple/client/events"
 	"kubesphere.io/kubesphere/pkg/simple/client/k8s"
-	"kubesphere.io/kubesphere/pkg/simple/client/ldap"
 	"kubesphere.io/kubesphere/pkg/simple/client/logging"
 	"kubesphere.io/kubesphere/pkg/simple/client/monitoring"
 	"kubesphere.io/kubesphere/pkg/simple/client/openpitrix"
 	"kubesphere.io/kubesphere/pkg/simple/client/s3"
 	"kubesphere.io/kubesphere/pkg/simple/client/sonarqube"
-	"net"
+	utilnet "kubesphere.io/kubesphere/pkg/utils/net"
 	"net/http"
 	rt "runtime"
-	"strings"
 	"time"
 )
 
@@ -131,9 +131,6 @@ type APIServer struct {
 	//
 	S3Client s3.Interface
 
-	//
-	LdapClient ldap.Interface
-
 	SonarClient sonarqube.SonarInterface
 
 	EventsClient events.Client
@@ -183,13 +180,20 @@ func (s *APIServer) installKubeSphereAPIs() {
 		s.Config.MultiClusterOptions.ProxyPublishService,
 		s.Config.MultiClusterOptions.ProxyPublishAddress,
 		s.Config.MultiClusterOptions.AgentImage))
-	urlruntime.Must(iamapi.AddToContainer(s.container,
-		im.NewOperator(s.KubernetesClient.KubeSphere(), s.InformerFactory),
+	imOperator := im.NewOperator(s.KubernetesClient.KubeSphere(), s.InformerFactory, s.Config.AuthenticationOptions)
+	urlruntime.Must(iamapi.AddToContainer(s.container, imOperator,
 		am.NewOperator(s.InformerFactory, s.KubernetesClient.KubeSphere(), s.KubernetesClient.Kubernetes()),
 		s.Config.AuthenticationOptions))
-	urlruntime.Must(oauth.AddToContainer(s.container,
-		im.NewOperator(s.KubernetesClient.KubeSphere(), s.InformerFactory),
-		token.NewJwtTokenIssuer(token.DefaultIssuerName, s.Config.AuthenticationOptions, s.CacheClient),
+
+	urlruntime.Must(oauth.AddToContainer(s.container, imOperator,
+		im.NewTokenOperator(
+			s.CacheClient,
+			s.Config.AuthenticationOptions),
+		im.NewPasswordAuthenticator(
+			s.KubernetesClient.KubeSphere(),
+			s.InformerFactory.KubeSphereSharedInformerFactory().Iam().V1alpha2().Users().Lister(),
+			s.Config.AuthenticationOptions),
+		im.NewLoginRecorder(s.KubernetesClient.KubeSphere()),
 		s.Config.AuthenticationOptions))
 	urlruntime.Must(servicemeshv1alpha2.AddToContainer(s.container))
 	urlruntime.Must(devopsv1alpha2.AddToContainer(s.container,
@@ -197,7 +201,8 @@ func (s *APIServer) installKubeSphereAPIs() {
 		s.DevopsClient,
 		s.SonarClient,
 		s.KubernetesClient.KubeSphere(),
-		s.S3Client))
+		s.S3Client,
+		s.Config.DevopsOptions.Host))
 	urlruntime.Must(devopsv1alpha3.AddToContainer(s.container,
 		s.DevopsClient,
 		s.KubernetesClient.Kubernetes(),
@@ -238,6 +243,16 @@ func (s *APIServer) buildHandlerChain(stopCh <-chan struct{}) {
 	requestInfoResolver := &request.RequestInfoFactory{
 		APIPrefixes:          sets.NewString("api", "apis", "kapis", "kapi"),
 		GrouplessAPIPrefixes: sets.NewString("api", "kapi"),
+		GlobalResources: []schema.GroupResource{
+			iamv1alpha2.Resource(iamv1alpha2.ResourcesPluralUser),
+			iamv1alpha2.Resource(iamv1alpha2.ResourcesPluralGlobalRole),
+			iamv1alpha2.Resource(iamv1alpha2.ResourcesPluralGlobalRoleBinding),
+			tenantv1alpha1.Resource(tenantv1alpha1.ResourcePluralWorkspace),
+			tenantv1alpha2.Resource(tenantv1alpha1.ResourcePluralWorkspace),
+			tenantv1alpha2.Resource(clusterv1alpha1.ResourcesPluralCluster),
+			clusterv1alpha1.Resource(clusterv1alpha1.ResourcesPluralCluster),
+			resourcev1alpha3.Resource(clusterv1alpha1.ResourcesPluralCluster),
+		},
 	}
 
 	handler := s.Server.Handler
@@ -245,14 +260,7 @@ func (s *APIServer) buildHandlerChain(stopCh <-chan struct{}) {
 
 	if s.Config.AuditingOptions.Enable {
 		handler = filters.WithAuditing(handler,
-			audit.NewAuditing(s.InformerFactory.KubeSphereSharedInformerFactory().Auditing().V1alpha1().Webhooks().Lister(),
-				s.Config.AuditingOptions.WebhookUrl, stopCh))
-	}
-
-	if s.Config.MultiClusterOptions.Enable {
-		clusterDispatcher := dispatch.NewClusterDispatch(s.InformerFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters(),
-			s.InformerFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters().Lister())
-		handler = filters.WithMultipleClusterDispatcher(handler, clusterDispatcher)
+			audit.NewAuditing(s.InformerFactory, s.Config.AuditingOptions.WebhookUrl, stopCh))
 	}
 
 	var authorizers authorizer.Authorizer
@@ -268,16 +276,22 @@ func (s *APIServer) buildHandlerChain(stopCh <-chan struct{}) {
 		excludedPaths := []string{"/oauth/*", "/kapis/config.kubesphere.io/*", "/kapis/version"}
 		pathAuthorizer, _ := path.NewAuthorizer(excludedPaths)
 		amOperator := am.NewReadOnlyOperator(s.InformerFactory)
-		authorizers = unionauthorizer.New(pathAuthorizer, proxy.NewAuthorizer(s.Config.MultiClusterOptions.Enable), authorizerfactory.NewRBACAuthorizer(amOperator))
+		authorizers = unionauthorizer.New(pathAuthorizer, authorizerfactory.NewRBACAuthorizer(amOperator))
 	}
 
 	handler = filters.WithAuthorization(handler, authorizers)
+	if s.Config.MultiClusterOptions.Enable {
+		clusterDispatcher := dispatch.NewClusterDispatch(s.InformerFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters(),
+			s.InformerFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters().Lister())
+		handler = filters.WithMultipleClusterDispatcher(handler, clusterDispatcher)
+	}
 
+	loginRecorder := im.NewLoginRecorder(s.KubernetesClient.KubeSphere())
 	// authenticators are unordered
 	authn := unionauth.New(anonymous.NewAuthenticator(),
-		basictoken.New(basic.NewBasicAuthenticator(im.NewOperator(s.KubernetesClient.KubeSphere(), s.InformerFactory))),
-		bearertoken.New(jwttoken.NewTokenAuthenticator(token.NewJwtTokenIssuer(token.DefaultIssuerName, s.Config.AuthenticationOptions, s.CacheClient))))
-	handler = filters.WithAuthentication(handler, authn)
+		basictoken.New(basic.NewBasicAuthenticator(im.NewPasswordAuthenticator(s.KubernetesClient.KubeSphere(), s.InformerFactory.KubeSphereSharedInformerFactory().Iam().V1alpha2().Users().Lister(), s.Config.AuthenticationOptions))),
+		bearertoken.New(jwttoken.NewTokenAuthenticator(im.NewTokenOperator(s.CacheClient, s.Config.AuthenticationOptions))))
+	handler = filters.WithAuthentication(handler, authn, loginRecorder)
 	handler = filters.WithRequestInfo(handler, requestInfoResolver)
 	s.Server.Handler = handler
 }
@@ -363,6 +377,7 @@ func (s *APIServer) waitForResourceSync(stopCh <-chan struct{}) error {
 		{Group: "iam.kubesphere.io", Version: "v1alpha2", Resource: "globalrolebindings"},
 		{Group: "iam.kubesphere.io", Version: "v1alpha2", Resource: "workspaceroles"},
 		{Group: "iam.kubesphere.io", Version: "v1alpha2", Resource: "workspacerolebindings"},
+		{Group: "iam.kubesphere.io", Version: "v1alpha2", Resource: "loginrecords"},
 		{Group: "cluster.kubesphere.io", Version: "v1alpha1", Resource: "clusters"},
 		{Group: "devops.kubesphere.io", Version: "v1alpha3", Resource: "devopsprojects"},
 	}
@@ -381,6 +396,24 @@ func (s *APIServer) waitForResourceSync(stopCh <-chan struct{}) error {
 		{Group: "servicemesh.kubesphere.io", Version: "v1alpha2", Resource: "servicepolicies"},
 	}
 
+	// federated resources on cached in multi cluster setup
+	federatedResourceGVRs := []schema.GroupVersionResource{
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedClusterRole),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedClusterRoleBindingBinding),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedNamespace),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedService),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedDeployment),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedSecret),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedConfigmap),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedStatefulSet),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedIngress),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedResourceQuota),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedPersistentVolumeClaim),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedWorkspace),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedUser),
+		typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedApplication),
+	}
+
 	// skip caching devops resources if devops not enabled
 	if s.DevopsClient != nil {
 		ksGVRs = append(ksGVRs, devopsGVRs...)
@@ -391,11 +424,15 @@ func (s *APIServer) waitForResourceSync(stopCh <-chan struct{}) error {
 		ksGVRs = append(ksGVRs, servicemeshGVRs...)
 	}
 
+	if s.Config.MultiClusterOptions.Enable {
+		ksGVRs = append(ksGVRs, federatedResourceGVRs...)
+	}
+
 	for _, gvr := range ksGVRs {
 		if !isResourceExists(gvr) {
 			klog.Warningf("resource %s not exists in the cluster", gvr)
 		} else {
-			_, err := ksInformerFactory.ForResource(gvr)
+			_, err = ksInformerFactory.ForResource(gvr)
 			if err != nil {
 				return err
 			}
@@ -446,7 +483,7 @@ func (s *APIServer) waitForResourceSync(stopCh <-chan struct{}) error {
 
 	apiextensionsInformerFactory := s.InformerFactory.ApiExtensionSharedInformerFactory()
 	apiextensionsGVRs := []schema.GroupVersionResource{
-		{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
+		{Group: "apiextensions.k8s.io", Version: "v1beta1", Resource: "customresourcedefinitions"},
 	}
 
 	for _, gvr := range apiextensionsGVRs {
@@ -500,7 +537,7 @@ func logRequestAndResponse(req *restful.Request, resp *restful.Response, chain *
 	}
 
 	logWithVerbose.Infof("%s - \"%s %s %s\" %d %d %dms",
-		getRequestIP(req),
+		utilnet.GetRequestIP(req.Request),
 		req.Request.Method,
 		req.Request.URL,
 		req.Request.Proto,
@@ -508,25 +545,6 @@ func logRequestAndResponse(req *restful.Request, resp *restful.Response, chain *
 		resp.ContentLength(),
 		time.Since(start)/time.Millisecond,
 	)
-}
-
-func getRequestIP(req *restful.Request) string {
-	address := strings.Trim(req.Request.Header.Get("X-Real-Ip"), " ")
-	if address != "" {
-		return address
-	}
-
-	address = strings.Trim(req.Request.Header.Get("X-Forwarded-For"), " ")
-	if address != "" {
-		return address
-	}
-
-	address, _, err := net.SplitHostPort(req.Request.RemoteAddr)
-	if err != nil {
-		return req.Request.RemoteAddr
-	}
-
-	return address
 }
 
 type errorResponder struct{}

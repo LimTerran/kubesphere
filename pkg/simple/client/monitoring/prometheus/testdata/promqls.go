@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package testdata
 
 var PromQLs = map[string]string{
@@ -10,7 +26,7 @@ var PromQLs = map[string]string{
 	"namespace_cpu_usage":                   `round(namespace:container_cpu_usage_seconds_total:sum_rate{namespace!="", namespace="kube-system"}, 0.001)`,
 	"namespace_memory_usage":                `namespace:container_memory_usage_bytes:sum{namespace!="", namespace=~"kube-system|default"}`,
 	"namespace_memory_usage_wo_cache":       `namespace:container_memory_usage_bytes_wo_cache:sum{namespace!="", workspace="system-workspace", namespace=~"kube-system|default"}`,
-	"workload_cpu_usage":                    `round(namespace:workload_cpu_usage:sum{namespace="default", workload=~"Deployment:apiserver|coredns"}, 0.001)`,
+	"workload_cpu_usage":                    `round(namespace:workload_cpu_usage:sum{namespace="default", workload=~"Deployment:(apiserver|coredns)"}, 0.001)`,
 	"workload_deployment_replica_available": `label_join(sum (label_join(label_replace(kube_deployment_status_replicas_available{namespace="default", deployment!="", deployment=~"apiserver|coredns"}, "owner_kind", "Deployment", "", ""), "workload", "", "deployment")) by (namespace, owner_kind, workload), "workload", ":", "owner_kind", "workload")`,
 	"pod_cpu_usage":                         `round(sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{job="kubelet", pod!="", image!=""}[5m])) * on (namespace, pod) group_left(owner_kind, owner_name) kube_pod_owner{owner_kind="ReplicaSet", owner_name=~"^elasticsearch-[^-]{1,10}$"} * on (namespace, pod) group_left(node) kube_pod_info{pod=~"elasticsearch-0", namespace="default"}, 0.001)`,
 	"pod_memory_usage":                      `sum by (namespace, pod) (container_memory_usage_bytes{job="kubelet", pod!="", image!=""}) * on (namespace, pod) group_left(owner_kind, owner_name) kube_pod_owner{} * on (namespace, pod) group_left(node) kube_pod_info{pod="elasticsearch-12345", namespace="default"}`,

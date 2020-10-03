@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha3
 
 import (
@@ -21,7 +37,7 @@ const (
 	ComponentAPIServer = "apiserver"
 	ComponentScheduler = "scheduler"
 
-	ErrNoHit           = "'end' must be after the namespace creation time."
+	ErrNoHit           = "'end' or 'time' must be after the namespace creation time."
 	ErrParamConflict   = "'time' and the combination of 'start' and 'end' are mutually exclusive."
 	ErrInvalidStartEnd = "'start' must be before 'end'."
 	ErrInvalidPage     = "Invalid parameter 'page'."
@@ -240,21 +256,23 @@ func (h handler) makeQueryOptions(r reqParams, lvl monitoring.Level) (q queryOpt
 		cts := ns.CreationTimestamp.Time
 
 		// Query should happen no earlier than namespace's creation time.
-		// For range query, check and mutate `start`. For instant query, check and mutate `time`.
+		// For range query, check and mutate `start`. For instant query, check `time`.
 		// In range query, if `start` and `end` are both before namespace's creation time, it causes no hit.
 		if !q.isRangeQuery() {
 			if q.time.Before(cts) {
-				q.time = cts
+				return q, errors.New(ErrNoHit)
 			}
 		} else {
-			if q.start.Before(cts) {
-				q.start = cts
-			}
 			if q.end.Before(cts) {
 				return q, errors.New(ErrNoHit)
 			}
+			if q.start.Before(cts) {
+				q.start = q.end
+				for q.start.Add(-q.step).After(cts) {
+					q.start = q.start.Add(-q.step)
+				}
+			}
 		}
-
 	}
 
 	// Parse sorting and paging params
@@ -262,6 +280,7 @@ func (h handler) makeQueryOptions(r reqParams, lvl monitoring.Level) (q queryOpt
 		q.target = r.target
 		q.page = DefaultPage
 		q.limit = DefaultLimit
+		q.order = r.order
 		if r.order != model.OrderAscending {
 			q.order = DefaultOrder
 		}

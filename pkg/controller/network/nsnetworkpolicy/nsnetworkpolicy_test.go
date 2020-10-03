@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package nsnetworkpolicy
 
 import (
@@ -22,6 +38,7 @@ import (
 	workspaceinformer "kubesphere.io/kubesphere/pkg/client/informers/externalversions/tenant/v1alpha1"
 	"kubesphere.io/kubesphere/pkg/constants"
 	"kubesphere.io/kubesphere/pkg/controller/network/provider"
+	options "kubesphere.io/kubesphere/pkg/simple/client/network"
 )
 
 var (
@@ -48,6 +65,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               %s: %s
+        - namespaceSelector:
+            matchLabels:
+              "kubesphere.io/namespace" : "kubesphere-monitoring-system"
   policyTypes:
     - Ingress`
 
@@ -113,8 +133,12 @@ var _ = Describe("Nsnetworkpolicy", func() {
 		nodeInforemer := kubeInformer.Core().V1().Nodes()
 		workspaceInformer := ksInformer.Tenant().V1alpha1().Workspaces()
 		namespaceInformer := kubeInformer.Core().V1().Namespaces()
+		nsnpOptions := options.NewNetworkOptions()
+		nsnpOptions.NSNPOptions.AllowedIngressNamespaces = append(nsnpOptions.NSNPOptions.AllowedIngressNamespaces, "kubesphere-monitoring-system")
 
-		c = NewNSNetworkPolicyController(kubeClient, ksClient.NetworkV1alpha1(), nsnpInformer, serviceInformer, nodeInforemer, workspaceInformer, namespaceInformer, calicoProvider)
+		c = NewNSNetworkPolicyController(kubeClient, ksClient.NetworkV1alpha1(),
+			nsnpInformer, serviceInformer, nodeInforemer,
+			workspaceInformer, namespaceInformer, calicoProvider, nsnpOptions.NSNPOptions)
 
 		serviceObj := &corev1.Service{}
 		Expect(StringToObject(serviceTmp, serviceObj)).ShouldNot(HaveOccurred())
@@ -134,12 +158,31 @@ var _ = Describe("Nsnetworkpolicy", func() {
 		go c.Start(stopCh)
 	})
 
+	It("test func namespaceNetworkIsolateEnabled", func() {
+		ns := &corev1.Namespace{}
+		Expect(namespaceNetworkIsolateEnabled(ns)).To(BeFalse())
+		ns.Annotations = make(map[string]string)
+		Expect(namespaceNetworkIsolateEnabled(ns)).To(BeFalse())
+		ns.Annotations[NamespaceNPAnnotationKey] = NamespaceNPAnnotationEnabled
+		Expect(namespaceNetworkIsolateEnabled(ns)).To(BeTrue())
+	})
+
+	It("test func workspaceNetworkIsolationEnabled", func() {
+		value := false
+		wksp := &wkspv1alpha1.Workspace{}
+		Expect(workspaceNetworkIsolationEnabled(wksp)).To(BeFalse())
+		wksp.Spec.NetworkIsolation = &value
+		Expect(workspaceNetworkIsolationEnabled(wksp)).To(BeFalse())
+		value = true
+		Expect(workspaceNetworkIsolationEnabled(wksp)).To(BeTrue())
+	})
+
 	It("Should create ns networkisolate np correctly in workspace", func() {
 		objSrt := fmt.Sprintf(workspaceNP, "testns", constants.WorkspaceLabelKey, "testworkspace")
 		obj := &netv1.NetworkPolicy{}
 		Expect(StringToObject(objSrt, obj)).ShouldNot(HaveOccurred())
 
-		policy := generateNSNP("testworkspace", "testns", true)
+		policy := c.generateNSNP("testworkspace", "testns", true)
 		Expect(reflect.DeepEqual(obj.Spec, policy.Spec)).To(BeTrue())
 	})
 
@@ -148,7 +191,7 @@ var _ = Describe("Nsnetworkpolicy", func() {
 		obj := &netv1.NetworkPolicy{}
 		Expect(StringToObject(objSrt, obj)).ShouldNot(HaveOccurred())
 
-		policy := generateNSNP("testworkspace", "testns", false)
+		policy := c.generateNSNP("testworkspace", "testns", false)
 		Expect(reflect.DeepEqual(obj.Spec, policy.Spec)).To(BeTrue())
 	})
 

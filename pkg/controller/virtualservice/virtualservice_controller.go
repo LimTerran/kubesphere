@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package virtualservice
 
 import (
@@ -427,22 +443,13 @@ func (v *VirtualServiceController) addDestinationRule(obj interface{}) {
 		return
 	}
 
-	_, err = v.virtualServiceLister.VirtualServices(dr.Namespace).Get(dr.Name)
+	key, err := cache.MetaNamespaceKeyFunc(service)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			key, err := cache.MetaNamespaceKeyFunc(service)
-			if err != nil {
-				utilruntime.HandleError(fmt.Errorf("get service %s/%s key failed", service.Namespace, service.Name))
-				return
-			}
-
-			v.queue.Add(key)
-		}
-	} else {
-		// Already have a virtualservice created.
+		utilruntime.HandleError(fmt.Errorf("get service %s/%s key failed", service.Namespace, service.Name))
+		return
 	}
 
-	return
+	v.queue.Add(key)
 }
 
 // when a strategy created

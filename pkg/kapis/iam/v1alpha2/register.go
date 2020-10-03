@@ -22,6 +22,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"kubesphere.io/kubesphere/pkg/api"
+	"kubesphere.io/kubesphere/pkg/api/iam"
 	iamv1alpha2 "kubesphere.io/kubesphere/pkg/apis/iam/v1alpha2"
 	authoptions "kubesphere.io/kubesphere/pkg/apiserver/authentication/options"
 	"kubesphere.io/kubesphere/pkg/apiserver/runtime"
@@ -62,16 +63,31 @@ func AddToContainer(container *restful.Container, im im.IdentityManagementInterf
 		Param(ws.PathParameter("user", "username")).
 		Returns(http.StatusOK, api.StatusOK, iamv1alpha2.User{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
+	ws.Route(ws.PUT("/users/{user}/password").
+		To(handler.ModifyPassword).
+		Doc("Modify user's password.").
+		Reads(iam.PasswordReset{}).
+		Param(ws.PathParameter("user", "username")).
+		Returns(http.StatusOK, api.StatusOK, errors.None).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
 	ws.Route(ws.GET("/users/{user}").
 		To(handler.DescribeUser).
 		Doc("Retrieve user details.").
 		Param(ws.PathParameter("user", "username")).
 		Returns(http.StatusOK, api.StatusOK, iamv1alpha2.User{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
+
 	ws.Route(ws.GET("/users").
 		To(handler.ListUsers).
 		Doc("List all users in global scope.").
 		Returns(http.StatusOK, api.StatusOK, api.ListResult{Items: []interface{}{iamv1alpha2.User{}}}).
+		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
+
+	ws.Route(ws.GET("/users/{user}/loginrecords").
+		To(handler.ListUserLoginRecords).
+		Param(ws.PathParameter("user", "username of the user")).
+		Doc("List user's login records.").
+		Returns(http.StatusOK, api.StatusOK, api.ListResult{Items: []interface{}{iamv1alpha2.LoginRecord{}}}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
 
 	// clustermembers
@@ -248,6 +264,7 @@ func AddToContainer(container *restful.Container, im im.IdentityManagementInterf
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
 	ws.Route(ws.GET("/globalroles/{globalrole}").
 		To(handler.DescribeGlobalRole).
+		Param(ws.PathParameter("globalrole", "global role name")).
 		Doc("Retrieve global role details.").
 		Returns(http.StatusOK, api.StatusOK, iamv1alpha2.GlobalRole{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
@@ -286,6 +303,7 @@ func AddToContainer(container *restful.Container, im im.IdentityManagementInterf
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))
 	ws.Route(ws.GET("/clusterroles/{clusterrole}").
 		To(handler.DescribeClusterRole).
+		Param(ws.PathParameter("clusterrole", "cluster role name")).
 		Doc("Retrieve cluster role details.").
 		Returns(http.StatusOK, api.StatusOK, rbacv1.ClusterRole{}).
 		Metadata(restfulspec.KeyOpenAPITags, []string{constants.AccessManagementTag}))

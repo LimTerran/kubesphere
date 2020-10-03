@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package devopsproject
 
 import (
@@ -120,8 +136,10 @@ func (f *fixture) newController() (*Controller, informers.SharedInformerFactory,
 	k8sI := kubeinformers.NewSharedInformerFactory(f.kubeclient, noResyncPeriodFunc())
 	dI := fakeDevOps.New(f.initDevOpsProject...)
 
-	c := NewController(f.kubeclient, f.client, dI, k8sI.Core().V1().Namespaces(),
-		i.Devops().V1alpha3().DevOpsProjects())
+	c := NewController(f.kubeclient, f.client, dI,
+		k8sI.Core().V1().Namespaces(),
+		i.Devops().V1alpha3().DevOpsProjects(),
+		i.Tenant().V1alpha1().Workspaces())
 
 	c.devOpsProjectSynced = alwaysReady
 	c.eventRecorder = &record.FakeRecorder{}
@@ -251,7 +269,9 @@ func filterInformerActions(actions []core.Action) []core.Action {
 			(action.Matches("list", devopsprojects.ResourcePluralDevOpsProject) ||
 				action.Matches("watch", devopsprojects.ResourcePluralDevOpsProject) ||
 				action.Matches("list", "namespaces") ||
-				action.Matches("watch", "namespaces")) {
+				action.Matches("watch", "namespaces") ||
+				action.Matches("watch", "workspaces") ||
+				action.Matches("list", "workspaces")) {
 			continue
 		}
 		ret = append(ret, action)
@@ -367,13 +387,13 @@ func TestUpdateNsOwnerReference(t *testing.T) {
 func TestCreateDevOpsProjects(t *testing.T) {
 	f := newFixture(t)
 	project := newDevOpsProject("test", "", true, false)
-	ns := newNamespace("test-123", "test", true, true)
+	ns := newNamespace("test", "test", false, true)
 	f.devopsProjectLister = append(f.devopsProjectLister, project)
 	f.objects = append(f.objects, project)
 	f.expectDevOpsProject = []string{""}
-
-	// because generateName not work in fakeClient, so DevOpsProject would not be update
-	// f.expectUpdateDevOpsProjectAction(project)
+	expect := project.DeepCopy()
+	expect.Status.AdminNamespace = "test"
+	f.expectUpdateDevOpsProjectAction(expect)
 	f.expectCreateNamespaceAction(ns)
 	f.run(getKey(project, t))
 }

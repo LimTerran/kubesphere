@@ -34,7 +34,7 @@ define ALL_HELP_INFO
 #           debugging tools like delve.
 endef
 .PHONY: all
-all: test hypersphere ks-apiserver controller-manager
+all: test ks-apiserver controller-manager
 
 # Build ks-apiserver binary
 ks-apiserver: fmt vet
@@ -43,10 +43,6 @@ ks-apiserver: fmt vet
 # Build controller-manager binary
 controller-manager: fmt vet
 	hack/gobuild.sh cmd/controller-manager
-
-# Build hypersphere binary
-hypersphere: fmt vet
-	hack/gobuild.sh cmd/hypersphere
 
 # Run go fmt against code 
 fmt: generate
@@ -84,6 +80,7 @@ openapi:
 	go run ./vendor/k8s.io/kube-openapi/cmd/openapi-gen/openapi-gen.go -O openapi_generated -i ./vendor/k8s.io/apimachinery/pkg/apis/meta/v1,./pkg/apis/cluster/v1alpha1,./vendor/k8s.io/apimachinery/pkg/runtime,./vendor/k8s.io/api/core/v1 -p kubesphere.io/kubesphere/pkg/apis/cluster/v1alpha1 -h ./hack/boilerplate.go.txt --report-filename ./api/api-rules/violation_exceptions.list
 	go run ./vendor/k8s.io/kube-openapi/cmd/openapi-gen/openapi-gen.go -O openapi_generated -i ./vendor/k8s.io/apimachinery/pkg/apis/meta/v1,./pkg/apis/devops/v1alpha3,./vendor/k8s.io/apimachinery/pkg/runtime -p kubesphere.io/kubesphere/pkg/apis/devops/v1alpha3 -h ./hack/boilerplate.go.txt --report-filename ./api/api-rules/violation_exceptions.list
 	go run ./tools/cmd/crd-doc-gen/main.go
+	go run ./tools/cmd/doc-gen/main.go
 # Build the docker image
 docker-build: all
 	hack/docker_build.sh

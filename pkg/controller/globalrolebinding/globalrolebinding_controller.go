@@ -39,6 +39,8 @@ import (
 	iamv1alpha2informers "kubesphere.io/kubesphere/pkg/client/informers/externalversions/iam/v1alpha2"
 	iamv1alpha2listers "kubesphere.io/kubesphere/pkg/client/listers/iam/v1alpha2"
 	"kubesphere.io/kubesphere/pkg/constants"
+	devops "kubesphere.io/kubesphere/pkg/simple/client/devops"
+
 	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"time"
@@ -55,7 +57,6 @@ const (
 type Controller struct {
 	k8sClient                           kubernetes.Interface
 	ksClient                            kubesphere.Interface
-	globalRoleBindingInformer           iamv1alpha2informers.GlobalRoleBindingInformer
 	globalRoleBindingLister             iamv1alpha2listers.GlobalRoleBindingLister
 	globalRoleBindingSynced             cache.InformerSynced
 	fedGlobalRoleBindingCache           cache.Store
@@ -70,10 +71,13 @@ type Controller struct {
 	// Kubernetes API.
 	recorder            record.EventRecorder
 	multiClusterEnabled bool
+	devopsClient        devops.Interface
 }
 
-func NewController(k8sClient kubernetes.Interface, ksClient kubesphere.Interface, globalRoleBindingInformer iamv1alpha2informers.GlobalRoleBindingInformer,
-	fedGlobalRoleBindingCache cache.Store, fedGlobalRoleBindingCacheController cache.Controller, multiClusterEnabled bool) *Controller {
+func NewController(k8sClient kubernetes.Interface, ksClient kubesphere.Interface,
+	globalRoleBindingInformer iamv1alpha2informers.GlobalRoleBindingInformer,
+	fedGlobalRoleBindingCache cache.Store, fedGlobalRoleBindingCacheController cache.Controller,
+	multiClusterEnabled bool) *Controller {
 	// Create event broadcaster
 	// Add sample-controller types to the default Kubernetes Scheme so Events can be
 	// logged for sample-controller types.
@@ -86,7 +90,6 @@ func NewController(k8sClient kubernetes.Interface, ksClient kubesphere.Interface
 	ctl := &Controller{
 		k8sClient:                           k8sClient,
 		ksClient:                            ksClient,
-		globalRoleBindingInformer:           globalRoleBindingInformer,
 		globalRoleBindingLister:             globalRoleBindingInformer.Lister(),
 		globalRoleBindingSynced:             globalRoleBindingInformer.Informer().HasSynced,
 		fedGlobalRoleBindingCache:           fedGlobalRoleBindingCache,
@@ -97,11 +100,11 @@ func NewController(k8sClient kubernetes.Interface, ksClient kubesphere.Interface
 	}
 	klog.Info("Setting up event handlers")
 	globalRoleBindingInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: ctl.enqueueClusterRoleBinding,
+		AddFunc: ctl.enqueueGlobalRoleBinding,
 		UpdateFunc: func(old, new interface{}) {
-			ctl.enqueueClusterRoleBinding(new)
+			ctl.enqueueGlobalRoleBinding(new)
 		},
-		DeleteFunc: ctl.enqueueClusterRoleBinding,
+		DeleteFunc: ctl.enqueueGlobalRoleBinding,
 	})
 	return ctl
 }
@@ -138,7 +141,7 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 	return nil
 }
 
-func (c *Controller) enqueueClusterRoleBinding(obj interface{}) {
+func (c *Controller) enqueueGlobalRoleBinding(obj interface{}) {
 	var key string
 	var err error
 	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
@@ -224,7 +227,7 @@ func (c *Controller) reconcile(key string) error {
 	}
 
 	if globalRoleBinding.RoleRef.Name == iamv1alpha2.PlatformAdmin {
-		if err := c.relateToClusterAdmin(globalRoleBinding); err != nil {
+		if err := c.assignClusterAdminRole(globalRoleBinding); err != nil {
 			klog.Error(err)
 			return err
 		}
@@ -286,11 +289,9 @@ func (c *Controller) multiClusterSync(globalRoleBinding *iamv1alpha2.GlobalRoleB
 	return nil
 }
 
-func (c *Controller) relateToClusterAdmin(globalRoleBinding *iamv1alpha2.GlobalRoleBinding) error {
+func (c *Controller) assignClusterAdminRole(globalRoleBinding *iamv1alpha2.GlobalRoleBinding) error {
 
 	username := findExpectUsername(globalRoleBinding)
-
-	// unexpected
 	if username == "" {
 		return nil
 	}

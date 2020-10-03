@@ -19,7 +19,9 @@ package elasticsearch
 import (
 	"bytes"
 	"fmt"
+	"kubesphere.io/kubesphere/pkg/utils/esutil"
 	"strings"
+	"sync"
 	"time"
 
 	es5 "github.com/elastic/go-elasticsearch/v5"
@@ -29,17 +31,30 @@ import (
 	"kubesphere.io/kubesphere/pkg/simple/client/auditing"
 )
 
+const (
+	ElasticV5 = "5"
+	ElasticV6 = "6"
+	ElasticV7 = "7"
+)
+
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type Elasticsearch struct {
-	c    client
-	opts struct {
-		index string
-	}
+	host    string
+	version string
+	index   string
+
+	c   client
+	mux sync.Mutex
 }
 
 func (es *Elasticsearch) SearchAuditingEvent(filter *auditing.Filter, from, size int64,
 	sort string) (*auditing.Events, error) {
+
+	if err := es.loadClient(); err != nil {
+		return &auditing.Events{}, err
+	}
+
 	queryPart := parseToQueryPart(filter)
 	if sort == "" {
 		sort = "desc"
@@ -59,7 +74,7 @@ func (es *Elasticsearch) SearchAuditingEvent(filter *auditing.Filter, from, size
 		return nil, err
 	}
 	resp, err := es.c.ExSearch(&Request{
-		Index: es.opts.index,
+		Index: resolveIndexNames(es.index, filter.StartTime, filter.EndTime),
 		Body:  bytes.NewBuffer(body),
 	})
 	if err != nil || resp == nil {
@@ -80,6 +95,11 @@ func (es *Elasticsearch) SearchAuditingEvent(filter *auditing.Filter, from, size
 }
 
 func (es *Elasticsearch) CountOverTime(filter *auditing.Filter, interval string) (*auditing.Histogram, error) {
+
+	if err := es.loadClient(); err != nil {
+		return &auditing.Histogram{}, err
+	}
+
 	if interval == "" {
 		interval = "15m"
 	}
@@ -105,14 +125,17 @@ func (es *Elasticsearch) CountOverTime(filter *auditing.Filter, interval string)
 		return nil, err
 	}
 	resp, err := es.c.ExSearch(&Request{
-		Index: es.opts.index,
+		Index: resolveIndexNames(es.index, filter.StartTime, filter.EndTime),
 		Body:  bytes.NewBuffer(body),
 	})
 	if err != nil || resp == nil {
 		return nil, err
 	}
 
-	raw := resp.Aggregations[aggName]
+	raw, ok := resp.Aggregations[aggName]
+	if !ok || len(raw) == 0 {
+		return &auditing.Histogram{}, nil
+	}
 	var agg struct {
 		Buckets []struct {
 			KeyAsString string `json:"key_as_string"`
@@ -123,15 +146,20 @@ func (es *Elasticsearch) CountOverTime(filter *auditing.Filter, interval string)
 	if err := json.Unmarshal(raw, &agg); err != nil {
 		return nil, err
 	}
-	histo := auditing.Histogram{Total: resp.Hits.Total}
+	h := auditing.Histogram{Total: resp.Hits.Total}
 	for _, b := range agg.Buckets {
-		histo.Buckets = append(histo.Buckets,
+		h.Buckets = append(h.Buckets,
 			auditing.Bucket{Time: b.Key, Count: b.DocCount})
 	}
-	return &histo, nil
+	return &h, nil
 }
 
 func (es *Elasticsearch) StatisticsOnResources(filter *auditing.Filter) (*auditing.Statistics, error) {
+
+	if err := es.loadClient(); err != nil {
+		return &auditing.Statistics{}, err
+	}
+
 	queryPart := parseToQueryPart(filter)
 	aggName := "resources_count"
 	aggsPart := map[string]interface{}{
@@ -152,14 +180,17 @@ func (es *Elasticsearch) StatisticsOnResources(filter *auditing.Filter) (*auditi
 		return nil, err
 	}
 	resp, err := es.c.ExSearch(&Request{
-		Index: es.opts.index,
+		Index: resolveIndexNames(es.index, filter.StartTime, filter.EndTime),
 		Body:  bytes.NewBuffer(body),
 	})
 	if err != nil || resp == nil {
 		return nil, err
 	}
 
-	raw := resp.Aggregations[aggName]
+	raw, ok := resp.Aggregations[aggName]
+	if !ok || len(raw) == 0 {
+		return &auditing.Statistics{}, nil
+	}
 	var agg struct {
 		Value int64 `json:"value"`
 	}
@@ -174,63 +205,89 @@ func (es *Elasticsearch) StatisticsOnResources(filter *auditing.Filter) (*auditi
 }
 
 func NewClient(options *Options) (*Elasticsearch, error) {
+	es := &Elasticsearch{
+		host:    options.Host,
+		version: options.Version,
+		index:   options.IndexPrefix,
+	}
+
+	err := es.initEsClient(es.version)
+	return es, err
+}
+
+func (es *Elasticsearch) initEsClient(version string) error {
 	clientV5 := func() (*ClientV5, error) {
-		c, err := es5.NewClient(es5.Config{Addresses: []string{options.Host}})
+		c, err := es5.NewClient(es5.Config{Addresses: []string{es.host}})
 		if err != nil {
 			return nil, err
 		}
 		return (*ClientV5)(c), nil
 	}
 	clientV6 := func() (*ClientV6, error) {
-		c, err := es6.NewClient(es6.Config{Addresses: []string{options.Host}})
+		c, err := es6.NewClient(es6.Config{Addresses: []string{es.host}})
 		if err != nil {
 			return nil, err
 		}
 		return (*ClientV6)(c), nil
 	}
 	clientV7 := func() (*ClientV7, error) {
-		c, err := es7.NewClient(es7.Config{Addresses: []string{options.Host}})
+		c, err := es7.NewClient(es7.Config{Addresses: []string{es.host}})
 		if err != nil {
 			return nil, err
 		}
 		return (*ClientV7)(c), nil
 	}
 
-	var (
-		version = options.Version
-		es      = Elasticsearch{}
-		err     error
-	)
-	es.opts.index = fmt.Sprintf("%s*", options.IndexPrefix)
-
-	if options.Version == "" {
-		var c5 *ClientV5
-		if c5, err = clientV5(); err == nil {
-			if version, err = c5.Version(); err == nil {
-				es.c = c5
-			}
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	switch strings.Split(version, ".")[0] {
-	case "5":
-		if es.c == nil {
-			es.c, err = clientV5()
-		}
-	case "6":
+	var err error
+	switch version {
+	case ElasticV5:
+		es.c, err = clientV5()
+	case ElasticV6:
 		es.c, err = clientV6()
-	case "7":
+	case ElasticV7:
 		es.c, err = clientV7()
+	case "":
+		es.c = nil
 	default:
-		err = fmt.Errorf("unsupported elasticsearch version %s", version)
+		err = fmt.Errorf("unsupported elasticsearch version %s", es.version)
 	}
+
+	return err
+}
+
+func (es *Elasticsearch) loadClient() error {
+
+	// Check if Elasticsearch client has been initialized.
+	if es.c != nil {
+		return nil
+	}
+
+	// Create Elasticsearch client.
+	es.mux.Lock()
+	defer es.mux.Unlock()
+
+	if es.c != nil {
+		return nil
+	}
+
+	c, e := es5.NewClient(es5.Config{Addresses: []string{es.host}})
+	if e != nil {
+		return e
+	}
+
+	version, err := (*ClientV5)(c).Version()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return &es, nil
+
+	v := strings.Split(version, ".")[0]
+	err = es.initEsClient(v)
+	if err != nil {
+		return err
+	}
+
+	es.version = v
+	return nil
 }
 
 func parseToQueryPart(f *auditing.Filter) interface{} {
@@ -248,7 +305,7 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 		"bool": &b,
 	}
 
-	if len(f.ObjectRefNamespaceMap) > 0 {
+	if len(f.ObjectRefNamespaceMap) > 0 || len(f.WorkspaceMap) > 0 {
 		bi := BoolBody{MinimumShouldMatch: &mini}
 		for k, v := range f.ObjectRefNamespaceMap {
 			bi.Should = append(bi.Should, map[string]interface{}{
@@ -265,6 +322,23 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 				},
 			})
 		}
+
+		for k, v := range f.WorkspaceMap {
+			bi.Should = append(bi.Should, map[string]interface{}{
+				"bool": &BoolBody{
+					Filter: []map[string]interface{}{{
+						"match_phrase": map[string]string{"Workspace.keyword": k},
+					}, {
+						"range": map[string]interface{}{
+							"RequestReceivedTimestamp": map[string]interface{}{
+								"gte": v,
+							},
+						},
+					}},
+				},
+			})
+		}
+
 		if len(bi.Should) > 0 {
 			b.Filter = append(b.Filter, map[string]interface{}{"bool": &bi})
 		}
@@ -286,14 +360,44 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 		return &bi
 	}
 
+	if len(f.ObjectRefNamespaces) > 0 {
+		if bi := shouldBoolbody("match_phrase", "ObjectRef.Namespace.keyword",
+			f.ObjectRefNamespaces, nil); bi != nil {
+			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
+		}
+	}
+	if len(f.ObjectRefNamespaceFuzzy) > 0 {
+		if bi := shouldBoolbody("wildcard", "ObjectRef.Namespace.keyword",
+			f.ObjectRefNamespaceFuzzy, func(s string) string {
+				return fmt.Sprintf("*" + s + "*")
+			}); bi != nil {
+			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
+		}
+	}
+
+	if len(f.Workspaces) > 0 {
+		if bi := shouldBoolbody("match_phrase", "Workspace.keyword",
+			f.Workspaces, nil); bi != nil {
+			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
+		}
+	}
+	if len(f.WorkspaceFuzzy) > 0 {
+		if bi := shouldBoolbody("wildcard", "Workspace.keyword",
+			f.WorkspaceFuzzy, func(s string) string {
+				return fmt.Sprintf("*" + s + "*")
+			}); bi != nil {
+			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
+		}
+	}
+
 	if len(f.ObjectRefNames) > 0 {
-		if bi := shouldBoolbody("match_phrase_prefix", "ObjectRef.Name.keyword",
+		if bi := shouldBoolbody("match_phrase", "ObjectRef.Name.keyword",
 			f.ObjectRefNames, nil); bi != nil {
 			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
 		}
 	}
 	if len(f.ObjectRefNameFuzzy) > 0 {
-		if bi := shouldBoolbody("wildcard", "ObjectRef.Name",
+		if bi := shouldBoolbody("wildcard", "ObjectRef.Name.keyword",
 			f.ObjectRefNameFuzzy, func(s string) string {
 				return fmt.Sprintf("*" + s + "*")
 			}); bi != nil {
@@ -302,20 +406,20 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 	}
 
 	if len(f.Verbs) > 0 {
-		if bi := shouldBoolbody("match_phrase", "Verb",
+		if bi := shouldBoolbody("match_phrase", "Verb.keyword",
 			f.Verbs, nil); bi != nil {
 			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
 		}
 	}
 	if len(f.Levels) > 0 {
-		if bi := shouldBoolbody("match_phrase", "Level",
+		if bi := shouldBoolbody("match_phrase", "Level.keyword",
 			f.Levels, nil); bi != nil {
 			b.Filter = append(b.Filter, map[string]interface{}{"bool": bi})
 		}
 	}
 
 	if len(f.SourceIpFuzzy) > 0 {
-		if bi := shouldBoolbody("wildcard", "SourceIPs",
+		if bi := shouldBoolbody("wildcard", "SourceIPs.keyword",
 			f.SourceIpFuzzy, func(s string) string {
 				return fmt.Sprintf("*" + s + "*")
 			}); bi != nil {
@@ -330,7 +434,7 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 		}
 	}
 	if len(f.UserFuzzy) > 0 {
-		if bi := shouldBoolbody("wildcard", "User.Username",
+		if bi := shouldBoolbody("wildcard", "User.Username.keyword",
 			f.UserFuzzy, func(s string) string {
 				return fmt.Sprintf("*" + s + "*")
 			}); bi != nil {
@@ -339,7 +443,7 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 	}
 
 	if len(f.GroupFuzzy) > 0 {
-		if bi := shouldBoolbody("wildcard", "User.Groups",
+		if bi := shouldBoolbody("wildcard", "User.Groups.keyword",
 			f.GroupFuzzy, func(s string) string {
 				return fmt.Sprintf("*" + s + "*")
 			}); bi != nil {
@@ -395,4 +499,15 @@ func parseToQueryPart(f *auditing.Filter) interface{} {
 	}
 
 	return queryBody
+}
+
+func resolveIndexNames(prefix string, start, end *time.Time) string {
+	var s, e time.Time
+	if start != nil {
+		s = *start
+	}
+	if end != nil {
+		e = *end
+	}
+	return esutil.ResolveIndexNames(prefix, s, e)
 }

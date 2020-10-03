@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package auditing
 
 import (
@@ -12,9 +28,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/klog"
+	devopsv1alpha3 "kubesphere.io/kubesphere/pkg/apis/devops/v1alpha3"
 	auditv1alpha1 "kubesphere.io/kubesphere/pkg/apiserver/auditing/v1alpha1"
+	"kubesphere.io/kubesphere/pkg/apiserver/query"
 	"kubesphere.io/kubesphere/pkg/apiserver/request"
 	"kubesphere.io/kubesphere/pkg/client/listers/auditing/v1alpha1"
+	"kubesphere.io/kubesphere/pkg/informers"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/devops"
 	"kubesphere.io/kubesphere/pkg/utils/iputil"
 	"net"
 	"net/http"
@@ -33,20 +54,22 @@ type Auditing interface {
 	Enabled() bool
 	K8sAuditingEnabled() bool
 	LogRequestObject(req *http.Request, info *request.RequestInfo) *auditv1alpha1.Event
-	LogResponseObject(e *auditv1alpha1.Event, resp *ResponseCapture, info *request.RequestInfo)
+	LogResponseObject(e *auditv1alpha1.Event, resp *ResponseCapture)
 }
 
 type auditing struct {
-	lister  v1alpha1.WebhookLister
-	cache   chan *auditv1alpha1.EventList
-	backend *Backend
+	webhookLister v1alpha1.WebhookLister
+	devopsGetter  v1alpha3.Interface
+	cache         chan *auditv1alpha1.EventList
+	backend       *Backend
 }
 
-func NewAuditing(lister v1alpha1.WebhookLister, url string, stopCh <-chan struct{}) Auditing {
+func NewAuditing(informers informers.InformerFactory, url string, stopCh <-chan struct{}) Auditing {
 
 	a := &auditing{
-		lister: lister,
-		cache:  make(chan *auditv1alpha1.EventList, DefaultCacheCapacity),
+		webhookLister: informers.KubeSphereSharedInformerFactory().Auditing().V1alpha1().Webhooks().Lister(),
+		devopsGetter:  devops.New(informers.KubeSphereSharedInformerFactory()),
+		cache:         make(chan *auditv1alpha1.EventList, DefaultCacheCapacity),
 	}
 
 	a.backend = NewBackend(url, ChannelCapacity, a.cache, SendTimeout, stopCh)
@@ -54,7 +77,7 @@ func NewAuditing(lister v1alpha1.WebhookLister, url string, stopCh <-chan struct
 }
 
 func (a *auditing) getAuditLevel() audit.Level {
-	wh, err := a.lister.Get(DefaultWebhook)
+	wh, err := a.webhookLister.Get(DefaultWebhook)
 	if err != nil {
 		klog.V(8).Info(err)
 		return audit.LevelNone
@@ -73,7 +96,7 @@ func (a *auditing) Enabled() bool {
 }
 
 func (a *auditing) K8sAuditingEnabled() bool {
-	wh, err := a.lister.Get(DefaultWebhook)
+	wh, err := a.webhookLister.Get(DefaultWebhook)
 	if err != nil {
 		klog.V(8).Info(err)
 		return false
@@ -96,7 +119,16 @@ func (a *auditing) K8sAuditingEnabled() bool {
 //
 func (a *auditing) LogRequestObject(req *http.Request, info *request.RequestInfo) *auditv1alpha1.Event {
 
+	// Ignore the dryRun k8s request.
+	if info.IsKubernetesRequest {
+		if len(req.URL.Query()["dryRun"]) != 0 {
+			klog.V(6).Infof("ignore dryRun request %s", req.URL.Path)
+			return nil
+		}
+	}
+
 	e := &auditv1alpha1.Event{
+		Devops:    info.DevOps,
 		Workspace: info.Workspace,
 		Cluster:   info.Cluster,
 		Event: audit.Event{
@@ -107,7 +139,7 @@ func (a *auditing) LogRequestObject(req *http.Request, info *request.RequestInfo
 			Stage:                    audit.StageResponseComplete,
 			ImpersonatedUser:         nil,
 			UserAgent:                req.UserAgent(),
-			RequestReceivedTimestamp: v1.NewMicroTime(time.Now()),
+			RequestReceivedTimestamp: v1.NowMicro(),
 			Annotations:              nil,
 			ObjectRef: &audit.ObjectReference{
 				Resource:        info.Resource,
@@ -122,16 +154,22 @@ func (a *auditing) LogRequestObject(req *http.Request, info *request.RequestInfo
 		},
 	}
 
-	// Handle the devops request which request url matched /devops/{devops}/kind.
-	if len(info.Parts) >= 3 && info.Parts[0] == "devops" {
-		e.ObjectRef.Subresource = ""
-		e.Devops = info.Parts[1]
-		// set resource as kind
-		e.ObjectRef.Resource = info.Parts[2]
+	// Get the workspace which the devops project be in.
+	if len(e.Devops) > 0 && len(e.Workspace) == 0 {
+		res, err := a.devopsGetter.List("", query.New())
+		if err != nil {
+			klog.Error(err)
+		}
 
-		// If the request url matched /devops/{devops}/kind/{kind}, set resource name as {kind}
-		if len(info.Parts) >= 4 {
-			e.ObjectRef.Name = info.Parts[3]
+		for _, obj := range res.Items {
+			d := obj.(*devopsv1alpha3.DevOpsProject)
+
+			if d.Name == e.Devops {
+				e.Workspace = d.Labels["kubesphere.io/workspace"]
+			} else if d.Status.AdminNamespace == e.Devops {
+				e.Workspace = d.Labels["kubesphere.io/workspace"]
+				e.Devops = d.Name
+			}
 		}
 	}
 
@@ -175,9 +213,9 @@ func (a *auditing) LogRequestObject(req *http.Request, info *request.RequestInfo
 	return e
 }
 
-func (a *auditing) LogResponseObject(e *auditv1alpha1.Event, resp *ResponseCapture, info *request.RequestInfo) {
+func (a *auditing) LogResponseObject(e *auditv1alpha1.Event, resp *ResponseCapture) {
 
-	e.StageTimestamp = v1.NewMicroTime(time.Now())
+	e.StageTimestamp = v1.NowMicro()
 	e.ResponseStatus = &v1.Status{Code: int32(resp.StatusCode())}
 	if e.Level.GreaterOrEqual(audit.LevelRequestResponse) {
 		e.ResponseObject = &runtime.Unknown{Raw: resp.Bytes()}
@@ -250,4 +288,9 @@ func (c *ResponseCapture) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, fmt.Errorf("ResponseWriter doesn't support Hijacker interface")
 	}
 	return hijacker.Hijack()
+}
+
+// CloseNotify is part of http.CloseNotifier interface
+func (c *ResponseCapture) CloseNotify() <-chan bool {
+	return c.ResponseWriter.(http.CloseNotifier).CloseNotify()
 }

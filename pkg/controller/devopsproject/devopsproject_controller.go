@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package devopsproject
 
 import (
@@ -18,6 +34,8 @@ import (
 	"k8s.io/klog"
 	devopsv1alpha3 "kubesphere.io/kubesphere/pkg/apis/devops/v1alpha3"
 	"kubesphere.io/kubesphere/pkg/client/clientset/versioned/scheme"
+	tenantv1alpha1informers "kubesphere.io/kubesphere/pkg/client/informers/externalversions/tenant/v1alpha1"
+	tenantv1alpha1listers "kubesphere.io/kubesphere/pkg/client/listers/tenant/v1alpha1"
 	"kubesphere.io/kubesphere/pkg/constants"
 	devopsClient "kubesphere.io/kubesphere/pkg/simple/client/devops"
 	"kubesphere.io/kubesphere/pkg/utils/k8sutil"
@@ -48,6 +66,9 @@ type Controller struct {
 	namespaceLister corev1lister.NamespaceLister
 	namespaceSynced cache.InformerSynced
 
+	workspaceLister tenantv1alpha1listers.WorkspaceLister
+	workspaceSynced cache.InformerSynced
+
 	workqueue workqueue.RateLimitingInterface
 
 	workerLoopPeriod time.Duration
@@ -59,7 +80,8 @@ func NewController(client clientset.Interface,
 	kubesphereClient kubesphereclient.Interface,
 	devopsClinet devopsClient.Interface,
 	namespaceInformer corev1informer.NamespaceInformer,
-	devopsInformer devopsinformers.DevOpsProjectInformer) *Controller {
+	devopsInformer devopsinformers.DevOpsProjectInformer,
+	workspaceInformer tenantv1alpha1informers.WorkspaceInformer) *Controller {
 
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(func(format string, args ...interface{}) {
@@ -77,6 +99,8 @@ func NewController(client clientset.Interface,
 		devOpsProjectSynced: devopsInformer.Informer().HasSynced,
 		namespaceLister:     namespaceInformer.Lister(),
 		namespaceSynced:     namespaceInformer.Informer().HasSynced,
+		workspaceLister:     workspaceInformer.Lister(),
+		workspaceSynced:     workspaceInformer.Informer().HasSynced,
 		workerLoopPeriod:    time.Second,
 	}
 
@@ -163,7 +187,7 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}) error {
 	klog.Info("starting devops project controller")
 	defer klog.Info("shutting down devops project controller")
 
-	if !cache.WaitForCacheSync(stopCh, c.devOpsProjectSynced) {
+	if !cache.WaitForCacheSync(stopCh, c.devOpsProjectSynced, c.devOpsProjectSynced, c.workspaceSynced) {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
@@ -246,6 +270,12 @@ func (c *Controller) syncHandler(key string) error {
 				ns := c.generateNewNamespace(project)
 				ns, err := c.client.CoreV1().Namespaces().Create(ns)
 				if err != nil {
+					// devops project name is conflict, cannot create admin namespace
+					if errors.IsAlreadyExists(err) {
+						klog.Errorf("Failed to create admin namespace for devopsproject %s, error %v", project.Name, err)
+						c.eventRecorder.Event(project, v1.EventTypeWarning, "CreateAdminNamespaceFailed", err.Error())
+						return err
+					}
 					klog.V(8).Info(err, fmt.Sprintf("failed to create ns %s ", key))
 					return err
 				}
@@ -273,12 +303,18 @@ func (c *Controller) syncHandler(key string) error {
 		}
 
 		if !reflect.DeepEqual(copyProject, project) {
-			_, err := c.kubesphereClient.DevopsV1alpha3().DevOpsProjects().Update(copyProject)
+			copyProject, err = c.kubesphereClient.DevopsV1alpha3().DevOpsProjects().Update(copyProject)
 			if err != nil {
 				klog.V(8).Info(err, fmt.Sprintf("failed to update ns %s ", key))
 				return err
 			}
 		}
+
+		if copyProject, err = c.bindWorkspace(copyProject); err != nil {
+			klog.Error(err)
+			return err
+		}
+
 		// Check project exists, otherwise we will create it.
 		_, err := c.devopsClient.GetDevOpsProject(copyProject.Status.AdminNamespace)
 		if err != nil {
@@ -312,6 +348,38 @@ func (c *Controller) syncHandler(key string) error {
 	return nil
 }
 
+func (c *Controller) bindWorkspace(project *devopsv1alpha3.DevOpsProject) (*devopsv1alpha3.DevOpsProject, error) {
+
+	workspaceName := project.Labels[constants.WorkspaceLabelKey]
+
+	if workspaceName == "" {
+		return project, nil
+	}
+
+	workspace, err := c.workspaceLister.Get(workspaceName)
+
+	if err != nil {
+		// skip if workspace not found
+		if errors.IsNotFound(err) {
+			return project, nil
+		}
+		klog.Error(err)
+		return nil, err
+	}
+
+	if !metav1.IsControlledBy(project, workspace) {
+		project.OwnerReferences = nil
+		if err := controllerutil.SetControllerReference(workspace, project, scheme.Scheme); err != nil {
+			klog.Error(err)
+			return nil, err
+		}
+
+		return c.kubesphereClient.DevopsV1alpha3().DevOpsProjects().Update(project)
+	}
+
+	return project, nil
+}
+
 func (c *Controller) deleteDevOpsProjectInDevOps(project *devopsv1alpha3.DevOpsProject) error {
 
 	err := c.devopsClient.DeleteDevOpsProject(project.Status.AdminNamespace)
@@ -323,16 +391,25 @@ func (c *Controller) deleteDevOpsProjectInDevOps(project *devopsv1alpha3.DevOpsP
 }
 
 func (c *Controller) generateNewNamespace(project *devopsv1alpha3.DevOpsProject) *v1.Namespace {
+	// devops project name and admin namespace name should be the same
+	// solve the access control problem of devops API v1alpha2 and v1alpha3
 	ns := &v1.Namespace{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Namespace",
 			APIVersion: v1.SchemeGroupVersion.String(),
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: project.Name,
-			Labels:       map[string]string{constants.DevOpsProjectLabelKey: project.Name},
+			Name: project.Name,
+			Labels: map[string]string{
+				constants.DevOpsProjectLabelKey: project.Name,
+			},
 		},
 	}
+
+	if creator := project.Annotations[constants.CreatorAnnotationKey]; creator != "" {
+		ns.Annotations = map[string]string{constants.CreatorAnnotationKey: creator}
+	}
+
 	controllerutil.SetControllerReference(project, ns, scheme.Scheme)
 	return ns
 }

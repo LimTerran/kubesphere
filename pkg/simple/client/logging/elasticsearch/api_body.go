@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package elasticsearch
 
 import (
@@ -5,7 +21,6 @@ import (
 	"github.com/json-iterator/go"
 	"k8s.io/klog"
 	"kubesphere.io/kubesphere/pkg/simple/client/logging"
-	"time"
 )
 
 const (
@@ -36,23 +51,38 @@ func (bb *bodyBuilder) mainBool(sf logging.SearchFilter) *bodyBuilder {
 	if len(sf.NamespaceFilter) != 0 {
 		var b Bool
 		for ns := range sf.NamespaceFilter {
-			match := Match{
-				Bool: &Bool{
-					Filter: []Match{
-						{
-							MatchPhrase: map[string]string{
-								"kubernetes.namespace_name.keyword": ns,
+			var match Match
+			if ct := sf.NamespaceFilter[ns]; ct != nil {
+				match = Match{
+					Bool: &Bool{
+						Filter: []Match{
+							{
+								MatchPhrase: map[string]string{
+									"kubernetes.namespace_name.keyword": ns,
+								},
 							},
-						},
-						{
-							Range: &Range{
-								Time: &Time{
-									Gte: func() *time.Time { t := sf.NamespaceFilter[ns]; return &t }(),
+							{
+								Range: &Range{
+									Time: &Time{
+										Gte: ct,
+									},
 								},
 							},
 						},
 					},
-				},
+				}
+			} else {
+				match = Match{
+					Bool: &Bool{
+						Filter: []Match{
+							{
+								MatchPhrase: map[string]string{
+									"kubernetes.namespace_name.keyword": ns,
+								},
+							},
+						},
+					},
+				}
 			}
 			b.Should = append(b.Should, match)
 		}

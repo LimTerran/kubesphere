@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog"
 	"kubesphere.io/kubesphere/pkg/api"
 	"kubesphere.io/kubesphere/pkg/apis/devops/v1alpha3"
+	"kubesphere.io/kubesphere/pkg/apiserver/query"
 	kubesphere "kubesphere.io/kubesphere/pkg/client/clientset/versioned"
 	"kubesphere.io/kubesphere/pkg/client/informers/externalversions"
 	"kubesphere.io/kubesphere/pkg/models/devops"
@@ -102,6 +103,9 @@ func (h *devopsHandler) CreateDevOpsProject(request *restful.Request, response *
 		klog.Error(err)
 		if errors.IsNotFound(err) {
 			api.HandleNotFound(response, request, err)
+			return
+		} else if errors.IsConflict(err) {
+			api.HandleConflict(response, request, err)
 			return
 		}
 		api.HandleBadRequest(response, request, err)
@@ -288,9 +292,8 @@ func (h *devopsHandler) GetCredential(request *restful.Request, response *restfu
 
 func (h *devopsHandler) ListCredential(request *restful.Request, response *restful.Response) {
 	devops := request.PathParameter("devops")
-	limit, offset := params.ParsePaging(request)
-
-	objs, err := h.devops.ListCredentialObj(devops, limit, offset)
+	query := query.ParseQueryParameter(request)
+	objs, err := h.devops.ListCredentialObj(devops, query)
 
 	if err != nil {
 		klog.Error(err)

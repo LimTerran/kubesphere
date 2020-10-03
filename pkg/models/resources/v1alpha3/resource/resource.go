@@ -27,6 +27,7 @@ import (
 	iamv1alpha2 "kubesphere.io/kubesphere/pkg/apis/iam/v1alpha2"
 	tenantv1alpha1 "kubesphere.io/kubesphere/pkg/apis/tenant/v1alpha1"
 	tenantv1alpha2 "kubesphere.io/kubesphere/pkg/apis/tenant/v1alpha2"
+	typesv1beta1 "kubesphere.io/kubesphere/pkg/apis/types/v1beta1"
 	"kubesphere.io/kubesphere/pkg/apiserver/query"
 	"kubesphere.io/kubesphere/pkg/informers"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3"
@@ -36,10 +37,23 @@ import (
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/clusterrolebinding"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/configmap"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/customresourcedefinition"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/daemonset"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/deployment"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/devops"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedapplication"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedconfigmap"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federateddeployment"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedingress"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatednamespace"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedpersistentvolumeclaim"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedsecret"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedservice"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/federatedstatefulset"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/globalrole"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/globalrolebinding"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/ingress"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/job"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/loginrecord"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/namespace"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/networkpolicy"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/node"
@@ -47,6 +61,8 @@ import (
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/pod"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/role"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/rolebinding"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/service"
+	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/statefulset"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/user"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/volumesnapshot"
 	"kubesphere.io/kubesphere/pkg/models/resources/v1alpha3/workspace"
@@ -65,12 +81,19 @@ func NewResourceGetter(factory informers.InformerFactory) *ResourceGetter {
 	getters := make(map[schema.GroupVersionResource]v1alpha3.Interface)
 
 	getters[schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}] = deployment.New(factory.KubernetesSharedInformerFactory())
+	getters[schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}] = daemonset.New(factory.KubernetesSharedInformerFactory())
+	getters[schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}] = statefulset.New(factory.KubernetesSharedInformerFactory())
+	getters[schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}] = service.New(factory.KubernetesSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}] = namespace.New(factory.KubernetesSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}] = configmap.New(factory.KubernetesSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}] = pod.New(factory.KubernetesSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "", Version: "v1", Resource: "nodes"}] = node.New(factory.KubernetesSharedInformerFactory())
+	getters[schema.GroupVersionResource{Group: "extensions", Version: "v1beta1", Resource: "ingresses"}] = ingress.New(factory.KubernetesSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "app.k8s.io", Version: "v1beta1", Resource: "applications"}] = application.New(factory.ApplicationSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}] = networkpolicy.New(factory.KubernetesSharedInformerFactory())
+	getters[schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}] = job.New(factory.KubernetesSharedInformerFactory())
+
+	// kubesphere resources
 	getters[devopsv1alpha3.SchemeGroupVersion.WithResource(devopsv1alpha3.ResourcePluralDevOpsProject)] = devops.New(factory.KubeSphereSharedInformerFactory())
 	getters[tenantv1alpha1.SchemeGroupVersion.WithResource(tenantv1alpha1.ResourcePluralWorkspace)] = workspace.New(factory.KubeSphereSharedInformerFactory())
 	getters[tenantv1alpha1.SchemeGroupVersion.WithResource(tenantv1alpha2.ResourcePluralWorkspaceTemplate)] = workspacetemplate.New(factory.KubeSphereSharedInformerFactory())
@@ -79,6 +102,7 @@ func NewResourceGetter(factory informers.InformerFactory) *ResourceGetter {
 	getters[iamv1alpha2.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralUser)] = user.New(factory.KubeSphereSharedInformerFactory(), factory.KubernetesSharedInformerFactory())
 	getters[iamv1alpha2.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralGlobalRoleBinding)] = globalrolebinding.New(factory.KubeSphereSharedInformerFactory())
 	getters[iamv1alpha2.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralWorkspaceRoleBinding)] = workspacerolebinding.New(factory.KubeSphereSharedInformerFactory())
+	getters[iamv1alpha2.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralLoginRecord)] = loginrecord.New(factory.KubeSphereSharedInformerFactory())
 	getters[rbacv1.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralRole)] = role.New(factory.KubernetesSharedInformerFactory())
 	getters[rbacv1.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralClusterRole)] = clusterrole.New(factory.KubernetesSharedInformerFactory())
 	getters[rbacv1.SchemeGroupVersion.WithResource(iamv1alpha2.ResourcesPluralRoleBinding)] = rolebinding.New(factory.KubernetesSharedInformerFactory())
@@ -87,6 +111,18 @@ func NewResourceGetter(factory informers.InformerFactory) *ResourceGetter {
 	getters[snapshotv1beta1.SchemeGroupVersion.WithResource("volumesnapshots")] = volumesnapshot.New(factory.SnapshotSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "cluster.kubesphere.io", Version: "v1alpha1", Resource: "clusters"}] = cluster.New(factory.KubeSphereSharedInformerFactory())
 	getters[schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}] = customresourcedefinition.New(factory.ApiExtensionSharedInformerFactory())
+
+	// federated resources
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedNamespace)] = federatednamespace.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedDeployment)] = federateddeployment.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedSecret)] = federatedsecret.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedConfigmap)] = federatedconfigmap.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedService)] = federatedservice.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedApplication)] = federatedapplication.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedPersistentVolumeClaim)] = federatedpersistentvolumeclaim.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedStatefulSet)] = federatedstatefulset.New(factory.KubeSphereSharedInformerFactory())
+	getters[typesv1beta1.SchemeGroupVersion.WithResource(typesv1beta1.ResourcePluralFederatedIngress)] = federatedingress.New(factory.KubeSphereSharedInformerFactory())
+
 	return &ResourceGetter{
 		getters: getters,
 	}

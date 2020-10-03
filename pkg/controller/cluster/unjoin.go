@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package cluster
 
 import (
@@ -18,7 +34,7 @@ import (
 // UnjoinCluster performs all the necessary steps to remove the
 // registration of a cluster from a KubeFed control plane provided the
 // required set of parameters are passed in.
-func unjoinCluster(hostConfig, clusterConfig *rest.Config, kubefedNamespace, hostClusterName, unjoiningClusterName string, forceDeletion, dryRun bool) error {
+func unjoinCluster(hostConfig, clusterConfig *rest.Config, kubefedNamespace, hostClusterName, unjoiningClusterName string, forceDeletion, dryRun bool, skipMemberClusterResources bool) error {
 
 	hostClientset, err := util.HostClientset(hostConfig)
 	if err != nil {
@@ -43,7 +59,7 @@ func unjoinCluster(hostConfig, clusterConfig *rest.Config, kubefedNamespace, hos
 		return err
 	}
 
-	if clusterClientset != nil {
+	if clusterClientset != nil && !skipMemberClusterResources {
 		err := deleteRBACResources(clusterClientset, kubefedNamespace, unjoiningClusterName, hostClusterName, forceDeletion, dryRun)
 		if err != nil {
 			if !forceDeletion {

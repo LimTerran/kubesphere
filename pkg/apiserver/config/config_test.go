@@ -102,6 +102,9 @@ func newTestConfig() (*Config, error) {
 		},
 		NetworkOptions: &network.Options{
 			EnableNetworkPolicy: true,
+			NSNPOptions: network.NSNPOptions{
+				AllowedIngressNamespaces: []string{},
+			},
 		},
 		MonitoringOptions: &prometheus.Options{
 			Endpoint: "http://prometheus.kubesphere-monitoring-system.svc",
@@ -121,7 +124,6 @@ func newTestConfig() (*Config, error) {
 		AuthenticationOptions: &authoptions.AuthenticationOptions{
 			AuthenticateRateLimiterMaxTries: 5,
 			AuthenticateRateLimiterDuration: 30 * time.Minute,
-			MaxAuthenticateRetries:          6,
 			JwtSecret:                       "xxxxxx",
 			MultipleLogin:                   false,
 			OAuthOptions: &oauth.Options{

@@ -1,3 +1,19 @@
+/*
+Copyright 2020 KubeSphere Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package devopscredential
 
 import (
@@ -223,8 +239,8 @@ func (c *Controller) syncHandler(key string) error {
 		}
 		// Check secret config exists, otherwise we will create it.
 		// if secret exists, update config
-		_, err := c.devopsClient.CreateCredentialInProject(nsName, copySecret)
-		if err != nil {
+		_, err := c.devopsClient.GetCredentialInProject(nsName, copySecret.Name)
+		if err == nil {
 			if _, ok := copySecret.Annotations[devopsv1alpha3.CredentialAutoSyncAnnoKey]; ok {
 				_, err := c.devopsClient.UpdateCredentialInProject(nsName, copySecret)
 				if err != nil {
@@ -232,8 +248,13 @@ func (c *Controller) syncHandler(key string) error {
 					return err
 				}
 			}
+		} else {
+			_, err = c.devopsClient.CreateCredentialInProject(nsName, copySecret)
+			if err != nil {
+				klog.V(8).Info(err, fmt.Sprintf("failed to create secret %s ", key))
+				return err
+			}
 		}
-
 	} else {
 		// Finalizers processing logic
 		if sliceutil.HasString(copySecret.ObjectMeta.Finalizers, devopsv1alpha3.CredentialFinalizerName) {
