@@ -14,6 +14,8 @@ require (
 	github.com/aws/aws-sdk-go v1.25.21
 	github.com/beevik/etree v1.1.0
 	github.com/container-storage-interface/spec v1.2.0
+	github.com/containernetworking/cni v0.8.0
+	github.com/davecgh/go-spew v1.1.1
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/docker/distribution v2.7.1+incompatible
 	github.com/docker/docker v1.4.2-0.20190822205725-ed20165a37b4
@@ -21,8 +23,8 @@ require (
 	github.com/elastic/go-elasticsearch/v6 v6.8.2
 	github.com/elastic/go-elasticsearch/v7 v7.3.0
 	github.com/elazarl/goproxy/ext v0.0.0-20190711103511-473e67f1d7d2 // indirect
-	github.com/emicklei/go-restful v2.11.1+incompatible
-	github.com/emicklei/go-restful-openapi v1.0.0
+	github.com/emicklei/go-restful v2.14.3+incompatible
+	github.com/emicklei/go-restful-openapi v1.4.1
 	github.com/emirpasic/gods v1.12.0 // indirect
 	github.com/fatih/structs v1.1.0
 	github.com/go-ldap/ldap v3.0.3+incompatible
@@ -45,7 +47,7 @@ require (
 	github.com/hashicorp/go-version v1.2.0 // indirect
 	github.com/json-iterator/go v1.1.9
 	github.com/kelseyhightower/envconfig v1.4.0 // indirect
-	github.com/kiali/kiali v0.15.1-0.20200520152915-769a61d75460
+	github.com/kiali/kiali v1.25.0
 	github.com/kubernetes-csi/external-snapshotter/v2 v2.1.0
 	github.com/kubesphere/sonargo v0.0.2
 	github.com/lib/pq v1.2.0 // indirect
@@ -94,6 +96,7 @@ require (
 	k8s.io/klog v1.0.0
 	k8s.io/kube-openapi v0.0.0-20191107075043-30be4d16710a
 	k8s.io/kubectl v0.17.3
+	k8s.io/utils v0.0.0-20191114184206-e782cd3c129f
 	openpitrix.io/openpitrix v0.4.9-0.20200611125425-ae07f141e797
 	sigs.k8s.io/application v1.0.0
 	sigs.k8s.io/controller-runtime v0.5.0
@@ -187,8 +190,8 @@ replace (
 	github.com/elastic/go-elasticsearch/v7 => github.com/elastic/go-elasticsearch/v7 v7.3.0
 	github.com/elazarl/goproxy => github.com/elazarl/goproxy v0.0.0-20190711103511-473e67f1d7d2
 	github.com/elazarl/goproxy/ext => github.com/elazarl/goproxy/ext v0.0.0-20190711103511-473e67f1d7d2
-	github.com/emicklei/go-restful => github.com/emicklei/go-restful v2.9.5+incompatible
-	github.com/emicklei/go-restful-openapi => github.com/emicklei/go-restful-openapi v1.0.0
+	github.com/emicklei/go-restful => github.com/emicklei/go-restful v2.14.3+incompatible
+	github.com/emicklei/go-restful-openapi => github.com/emicklei/go-restful-openapi v1.4.1
 	github.com/emirpasic/gods => github.com/emirpasic/gods v1.12.0
 	github.com/erikstmartin/go-testdb => github.com/erikstmartin/go-testdb v0.0.0-20160219214506-8d10e4a1bae5
 	github.com/evanphx/json-patch => github.com/evanphx/json-patch v4.5.0+incompatible
@@ -280,7 +283,7 @@ replace (
 	github.com/kelseyhightower/envconfig => github.com/kelseyhightower/envconfig v1.4.0
 	github.com/kevinburke/ssh_config => github.com/kevinburke/ssh_config v0.0.0-20180830205328-81db2a75821e
 	github.com/keybase/go-ps => github.com/keybase/go-ps v0.0.0-20161005175911-668c8856d999
-	github.com/kiali/kiali => github.com/kubesphere/kiali v0.15.1-0.20200520152915-769a61d75460
+	github.com/kiali/kiali => github.com/kubesphere/kiali v0.15.1-0.20201030070213-04b6506d6c7d
 	github.com/kisielk/errcheck => github.com/kisielk/errcheck v1.2.0
 	github.com/kisielk/gotool => github.com/kisielk/gotool v1.0.0
 	github.com/koding/multiconfig => github.com/koding/multiconfig v0.0.0-20171124222453-69c27309b2d7
